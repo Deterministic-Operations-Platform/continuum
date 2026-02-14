@@ -1,0 +1,11 @@
+# Example workflow (stub)
+name: "defect-fix-and-verify"
+steps:
+  - type: jira.fetch
+    key: "RTPAY-1234"
+  - type: github.create_branch
+    from: "main"
+  - type: tests.run_postman
+    collection: "collections/rtpay.json"
+  - type: db.verify
+    query: "..."
