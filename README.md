@@ -15,8 +15,8 @@ This repo is a **starter scaffold** you can publish from your iPhone today, then
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python -m continuum --help
+pip install -e .
+continuum --help
 ```
 
 ## Roadmap (high level)
