@@ -16,7 +16,8 @@ public class SimpleYamlParser {
     public Map<String, Object> parse(String yamlContent) {
         Map<String, Object> root = new LinkedHashMap<>();
         List<Map<String, Object>> currentList = null;
-        String currentListKey = null;
+        String currentContainerKey = null;
+        Map<String, Object> currentMapping = null;
         Map<String, Object> currentItem = null;
 
         String[] lines = yamlContent.split("\\r?\\n");
@@ -32,16 +33,20 @@ public class SimpleYamlParser {
             }
 
             if (!rawLine.startsWith(" ") && trimmed.endsWith(":")) {
-                currentListKey = trimmed.substring(0, trimmed.length() - 1).trim();
-                currentList = new ArrayList<>();
-                root.put(currentListKey, currentList);
+                currentContainerKey = trimmed.substring(0, trimmed.length() - 1).trim();
+                currentList = null;
+                currentMapping = null;
                 currentItem = null;
                 continue;
             }
 
             if (trimmed.startsWith("- ")) {
-                if (currentList == null || currentListKey == null) {
+                if (currentContainerKey == null) {
                     throw new ScenarioValidationError("Invalid YAML list item at line " + (i + 1));
+                }
+                if (currentList == null) {
+                    currentList = new ArrayList<>();
+                    root.put(currentContainerKey, currentList);
                 }
                 currentItem = new LinkedHashMap<>();
                 currentList.add(currentItem);
@@ -57,10 +62,23 @@ public class SimpleYamlParser {
                 continue;
             }
 
+            if (rawLine.startsWith(" ") && currentContainerKey != null) {
+                if (currentList != null) {
+                    throw new ScenarioValidationError("Invalid YAML list entry at line " + (i + 1));
+                }
+                if (currentMapping == null) {
+                    currentMapping = new LinkedHashMap<>();
+                    root.put(currentContainerKey, currentMapping);
+                }
+                parseKeyValueInto(trimmed, currentMapping, i + 1);
+                continue;
+            }
+
             if (!rawLine.startsWith(" ")) {
                 parseKeyValueInto(trimmed, root, i + 1);
                 currentList = null;
-                currentListKey = null;
+                currentContainerKey = null;
+                currentMapping = null;
                 currentItem = null;
                 continue;
             }

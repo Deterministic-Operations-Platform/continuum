@@ -4,10 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.Comparator;
-import java.util.List;
 import java.util.Objects;
-import java.util.stream.Stream;
 
 /**
  * Deterministic file-backed evidence collector.
@@ -55,22 +52,9 @@ public class FileEvidenceCollector implements EvidenceCollector {
             if (!Files.isDirectory(directory)) {
                 throw new IOException("Run path exists and is not a directory: " + directory);
             }
-            clearDirectory(directory);
             return;
         }
 
         Files.createDirectories(directory);
-    }
-
-    private void clearDirectory(Path directory) throws IOException {
-        try (Stream<Path> stream = Files.walk(directory)) {
-            List<Path> paths = stream
-                    .filter(path -> !path.equals(directory))
-                    .sorted(Comparator.reverseOrder())
-                    .toList();
-            for (Path path : paths) {
-                Files.deleteIfExists(path);
-            }
-        }
     }
 }

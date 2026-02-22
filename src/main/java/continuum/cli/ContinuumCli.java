@@ -10,26 +10,9 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-<<<<<<< Updated upstream
-import java.nio.file.StandardCopyOption;
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
-import java.util.Objects;
-import java.util.UUID;
-import java.util.function.Supplier;
-
-public class ContinuumCli {
-    private static Supplier<ScenarioLoader> scenarioLoaderFactory = ScenarioLoader::new;
-
-    static void setScenarioLoaderFactoryForTests(Supplier<ScenarioLoader> factory) {
-        scenarioLoaderFactory = Objects.requireNonNull(factory, "factory");
-    }
-
-    static void resetTestOverrides() {
-        scenarioLoaderFactory = ScenarioLoader::new;
-=======
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public class ContinuumCli {
     @FunctionalInterface
@@ -42,6 +25,15 @@ public class ContinuumCli {
 
         @Override
         public synchronized String nextRunId() {
+            String fixedRunId = firstNonBlank(
+                    System.getProperty("continuum.runId"),
+                    System.getenv("CONTINUUM_RUN_ID"),
+                    System.getenv("CONTINUUM_FIXED_RUN_ID")
+            );
+            if (fixedRunId != null) {
+                return fixedRunId;
+            }
+
             String runId = String.format("run-fixed-%03d", next);
             next += 1;
             return runId;
@@ -55,6 +47,16 @@ public class ContinuumCli {
             "manifest.json"
     );
 
+    private static Supplier<ScenarioLoader> scenarioLoaderFactory = ScenarioLoader::new;
+
+    static void setScenarioLoaderFactoryForTests(Supplier<ScenarioLoader> factory) {
+        scenarioLoaderFactory = Objects.requireNonNull(factory, "factory");
+    }
+
+    static void resetTestOverrides() {
+        scenarioLoaderFactory = ScenarioLoader::new;
+    }
+
     private final ScenarioLoader scenarioLoader;
     private final RunIdGenerator runIdGenerator;
     private final Path runsRoot;
@@ -62,11 +64,11 @@ public class ContinuumCli {
     private final PrintStream err;
 
     public ContinuumCli() {
-        this(new ScenarioLoader(), new SequentialRunIdGenerator(), Path.of("runs"), System.out, System.err);
+        this(scenarioLoaderFactory.get(), new SequentialRunIdGenerator(), defaultRunsRoot(), System.out, System.err);
     }
 
     public ContinuumCli(ScenarioLoader scenarioLoader) {
-        this(scenarioLoader, new SequentialRunIdGenerator(), Path.of("runs"), System.out, System.err);
+        this(scenarioLoader, new SequentialRunIdGenerator(), defaultRunsRoot(), System.out, System.err);
     }
 
     public ContinuumCli(
@@ -81,7 +83,6 @@ public class ContinuumCli {
         this.runsRoot = Objects.requireNonNull(runsRoot, "runsRoot");
         this.out = Objects.requireNonNull(out, "out");
         this.err = Objects.requireNonNull(err, "err");
->>>>>>> Stashed changes
     }
 
     public static void main(String[] args) {
@@ -120,33 +121,13 @@ public class ContinuumCli {
             return 2;
         }
 
-<<<<<<< Updated upstream
-        Path scenarioPath = Path.of(args[1]);
-        ScenarioLoader loader = scenarioLoaderFactory.get();
-        Scenario scenario = loader.load(scenarioPath);
-
-        String runId = buildRunId();
-        Path runDirectory = resolveRunDirectory(runId);
-=======
->>>>>>> Stashed changes
         try {
             Path scenarioPath = Path.of(args[1]).toAbsolutePath().normalize();
             Scenario scenario = scenarioLoader.load(scenarioPath);
             String runId = runIdGenerator.nextRunId();
-            Path runDirectory = resolveRunsRootForScenario(scenarioPath).resolve(runId);
+            Path runDirectory = resolveRunDirectory(scenarioPath, runId);
             EvidenceCollector collector = new FileEvidenceCollector();
 
-<<<<<<< Updated upstream
-            String summaryJson = """
-                    {
-                      \"runId\": \"%s\",
-                      \"scenarioName\": \"%s\",
-                      \"status\": \"STARTED\"
-                    }
-                    """.formatted(escapeJson(runId), escapeJson(scenario.getName()));
-            Files.writeString(runDirectory.resolve("summary.json"), summaryJson, StandardCharsets.UTF_8);
-            Files.writeString(runDirectory.resolve("events.jsonl"), "", StandardCharsets.UTF_8);
-=======
             try {
                 collector.initialize(runDirectory);
                 collector.collect("scenario.yaml", buildScenarioSnapshot(scenarioPath, scenario));
@@ -157,7 +138,6 @@ public class ContinuumCli {
                 err.println("Run failed: Unable to create run artifacts in " + runDirectory);
                 return 1;
             }
->>>>>>> Stashed changes
 
             out.println("Scenario: " + scenario.getName());
             out.println("Run directory: " + runDirectory);
@@ -168,22 +148,6 @@ public class ContinuumCli {
         }
     }
 
-<<<<<<< Updated upstream
-    private static String buildRunId() {
-        String fixedRunId = firstNonBlank(
-                System.getProperty("continuum.runId"),
-                System.getenv("CONTINUUM_RUN_ID"),
-                System.getenv("CONTINUUM_FIXED_RUN_ID")
-        );
-        if (fixedRunId != null) {
-            return fixedRunId;
-        }
-
-        String timestamp = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
-                .replace(":", "")
-                .replace("-", "");
-        return timestamp + "-" + UUID.randomUUID().toString().substring(0, 8);
-=======
     private byte[] buildScenarioSnapshot(Path scenarioPath, Scenario scenario) throws IOException {
         if (Files.exists(scenarioPath)) {
             return Files.readAllBytes(scenarioPath);
@@ -224,20 +188,17 @@ public class ContinuumCli {
                 MANIFEST_FILES.get(3)
         );
         return manifestJson.getBytes(StandardCharsets.UTF_8);
->>>>>>> Stashed changes
     }
 
-    private static Path resolveRunDirectory(String runId) {
+    private static Path defaultRunsRoot() {
         String configuredRunsDir = firstNonBlank(
                 System.getProperty("continuum.runsDir"),
                 System.getenv("CONTINUUM_RUNS_DIR")
         );
 
-        Path runsRoot = configuredRunsDir == null
+        return configuredRunsDir == null
                 ? Path.of("runs")
                 : Path.of(configuredRunsDir.replace('\\', '/'));
-
-        return runsRoot.resolve(runId);
     }
 
     private static String firstNonBlank(String... values) {
@@ -269,6 +230,15 @@ public class ContinuumCli {
         }
 
         return scenarioParent.resolve(runsRoot).normalize();
+    }
+
+    private Path resolveRunDirectory(Path scenarioPath, String runId) {
+        Path effectiveRunsRoot = resolveRunsRootForScenario(scenarioPath).toAbsolutePath().normalize();
+        Path runDirectory = effectiveRunsRoot.resolve(runId).normalize();
+        if (!runDirectory.startsWith(effectiveRunsRoot)) {
+            throw new IllegalArgumentException("Invalid run id: " + runId);
+        }
+        return runDirectory;
     }
 
     private void printUsage() {
