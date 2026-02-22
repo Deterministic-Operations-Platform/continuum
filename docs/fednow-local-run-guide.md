@@ -10,6 +10,8 @@ This guide is for local FEDNOW CAM29 scenario runs using:
 - The evidence collector no longer recursively clears the entire existing `runs/<run-id>` directory at run start.
 - Why it failed before: on Windows, any locked leftover file in a reused run directory caused initialization to fail before `scenario.yaml`, `summary.json`, `events.log`, and `manifest.json` were written.
 - Current behavior: run directory is reused as-is, and managed artifacts are overwritten deterministically.
+- YAML scenario parsing now tolerates inline comments in scalar values (for example, `rail: fednow # payment rail`) while preserving deterministic parsing behavior.
+- Artifact writes now fail fast for blank names and enforce absolute normalized path checks to keep writes under `runs/<run-id>/`.
 
 ## Quick Start (FEDNOW Local)
 Run from repository root in PowerShell:
@@ -90,3 +92,20 @@ Observed result after fix:
 - This fix targets initialization failures from recursive directory cleanup on reused run directories.
 - If a managed artifact file is itself locked at write time, the run can still fail.
 - This guide covers the Java CLI FEDNOW path only; it does not change Python CLI behavior.
+
+## Preparing a FEDNOW-only Commit
+To stage only FEDNOW parser/evidence/docs updates and exclude CLI edits, use:
+
+```bash
+git restore --staged .
+git add src/main/java/continuum/core/scenario/SimpleYamlParser.java \
+        src/main/java/continuum/evidence/collector/FileEvidenceCollector.java \
+        README.md docs/fednow-local-run-guide.md
+git restore src/main/java/continuum/cli/ContinuumCli.java
+```
+
+If you need to park non-FEDNOW work before committing:
+
+```bash
+git stash push -m "wip-non-fednow" -- src/main/java/continuum/cli/ContinuumCli.java
+```

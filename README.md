@@ -23,9 +23,10 @@ continuum run examples/fednow-cam29-success.yaml --run-id local-001
 
 If a plugin is missing, execution fails deterministically and still writes evidence to `runs/<run-id>/summary.json`.
 
-## FEDNOW run-dir lock fix (Windows)
-- Fixed scope: FEDNOW scenario runs through the Java CLI path now tolerate reused `runs/<run-id>` directories that contain unrelated locked files.
-- Previous failure: the file evidence collector recursively deleted the entire run directory during initialization; on Windows this failed when any leftover file handle was open.
+## FEDNOW-only hardening updates
+- `SimpleYamlParser` now ignores inline YAML comments in scalar values, including FEDNOW scenario metadata lines like `rail: fednow # payment rail`.
+- `FileEvidenceCollector` now rejects blank artifact names and uses absolute, normalized path checks before writing evidence files.
+- Scope intentionally excludes Java CLI command behavior (`ContinuumCli.java`) unless required for correctness.
 - Reference guide: `docs/fednow-local-run-guide.md`
 
 ## Scenario format (v0.1)

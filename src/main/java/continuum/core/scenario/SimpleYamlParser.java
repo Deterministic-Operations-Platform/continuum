@@ -106,6 +106,11 @@ public class SimpleYamlParser {
             return "";
         }
 
+        valueText = stripInlineComment(valueText);
+        if (valueText.isEmpty()) {
+            return "";
+        }
+
         if ((valueText.startsWith("\"") && valueText.endsWith("\""))
                 || (valueText.startsWith("'") && valueText.endsWith("'"))) {
             return valueText.substring(1, valueText.length() - 1);
@@ -126,5 +131,30 @@ public class SimpleYamlParser {
         } catch (NumberFormatException ignored) {
             return valueText;
         }
+    }
+
+    private String stripInlineComment(String valueText) {
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
+
+        for (int i = 0; i < valueText.length(); i++) {
+            char current = valueText.charAt(i);
+            if (current == '\'' && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+            if (current == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+
+            if (current == '#' && !inSingleQuote && !inDoubleQuote) {
+                if (i == 0 || Character.isWhitespace(valueText.charAt(i - 1))) {
+                    return valueText.substring(0, i).trim();
+                }
+            }
+        }
+
+        return valueText;
     }
 }
