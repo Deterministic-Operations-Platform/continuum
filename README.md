@@ -24,4 +24,10 @@ continuum --help
 - Workflows: defect → branch → fix → tests → evidence → PR → deploy checklist
 - Monetization: B2B platform fee + usage-based execution minutes + premium connectors/compliance
 
+## Post-v0.1 stabilization roadmap
+- Incident replay scenarios: deterministically re-run real failed cases to validate fixes and prevent regressions.
+- Environment drift detection: detect config and dependency mismatches between expected and live runtime environments.
+- Change-impact analysis: map each code change to the minimal scenario subset required for high-confidence validation.
+- Additional rails: expand beyond FedNow with RTP and ACH using scenario packs + rail-specific plugins.
+
 > Note: This repo contains no proprietary bank code or credentials.
