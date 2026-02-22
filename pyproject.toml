@@ -16,8 +16,6 @@ dependencies = [
 [project.scripts]
 continuum = "continuum.__main__:main"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["continuum*"]
