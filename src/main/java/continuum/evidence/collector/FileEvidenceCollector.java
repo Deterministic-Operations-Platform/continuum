@@ -24,18 +24,24 @@ public class FileEvidenceCollector implements EvidenceCollector {
             throw new IOException("Evidence collector is not initialized");
         }
 
+        if (name == null || name.trim().isEmpty()) {
+            throw new IOException("Artifact name must not be empty");
+        }
+
         Path target = runDirectory.resolve(name).normalize();
-        if (!target.startsWith(runDirectory.normalize())) {
+        Path normalizedRunDirectory = runDirectory.normalize().toAbsolutePath();
+        Path absoluteTarget = target.toAbsolutePath();
+        if (!absoluteTarget.startsWith(normalizedRunDirectory)) {
             throw new IOException("Artifact path escapes run directory: " + name);
         }
 
-        Path parent = target.getParent();
+        Path parent = absoluteTarget.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
 
         Files.write(
-                target,
+                absoluteTarget,
                 content == null ? new byte[0] : content,
                 StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING
