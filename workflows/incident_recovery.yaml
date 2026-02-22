@@ -1,0 +1,7 @@
+workflow: incident_recovery
+steps:
+  - classify_incident
+  - run_dependency_checks
+  - validate_core_services
+  - execute_safe_recovery
+  - generate_audit_report

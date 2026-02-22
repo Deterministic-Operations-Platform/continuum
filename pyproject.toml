@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "continuum"
+version = "0.1.0"
+description = "Continuum Orchestrator starter CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pyyaml>=6.0.1",
+  "rich>=13.7.1",
+]
+
+[project.scripts]
+continuum = "continuum.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["continuum*"]
