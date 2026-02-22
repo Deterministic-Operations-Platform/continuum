@@ -6,6 +6,7 @@ This repo is a **starter scaffold** you can publish from your iPhone today, then
 
 ## What’s inside
 - `docs/` — product + architecture notes
+- `docs/glossary.md` — shared terminology for scenario execution
 - `assets/` — deck + diagrams/images
 - `data/` — valuation/revenue sensitivity CSV
 - `src/` — minimal CLI scaffold (Python) to grow into an orchestrator
