@@ -9,7 +9,8 @@ This repo is a **starter scaffold** you can publish from your iPhone today, then
 - `docs/glossary.md` — shared terminology for scenario execution
 - `assets/` — deck + diagrams/images
 - `data/` — valuation/revenue sensitivity CSV
-- `src/` — minimal CLI scaffold (Python) to grow into an orchestrator
+- `continuum/` — Python CLI package entrypoint (`python -m continuum`)
+- `src/` — TypeScript scaffold pieces for future orchestrator components
 - `.github/workflows/` — placeholder CI
 
 ## Quick start (local)
@@ -18,6 +19,12 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e .
 continuum --help
+python -m continuum --help
+```
+
+## Quick check (without install)
+```bash
+python -m continuum --help
 ```
 
 ## Roadmap (high level)
