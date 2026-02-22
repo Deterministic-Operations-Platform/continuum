@@ -1,0 +1,9 @@
+{
+  "runId": "run-lock-test",
+  "artifacts": [
+    "scenario.yaml",
+    "summary.json",
+    "events.log",
+    "manifest.json"
+  ]
+}

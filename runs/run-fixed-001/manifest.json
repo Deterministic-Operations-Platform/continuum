@@ -1,0 +1,9 @@
+{
+  "runId": "run-fixed-001",
+  "artifacts": [
+    "scenario.yaml",
+    "summary.json",
+    "events.log",
+    "manifest.json"
+  ]
+}

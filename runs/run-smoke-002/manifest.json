@@ -1,0 +1,9 @@
+{
+  "runId": "run-smoke-002",
+  "artifacts": [
+    "scenario.yaml",
+    "summary.json",
+    "events.log",
+    "manifest.json"
+  ]
+}
