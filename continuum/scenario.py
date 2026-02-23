@@ -17,7 +17,7 @@ from continuum.errors import ScenarioValidationError
 class ScenarioStep:
     name: str
     type: str
-    with_: dict[str, Any]
+    with_: dict[str, Any] = field(default_factory=dict)
     publish: dict[str, str] | None = None
     key: str = ""
     always: bool = False

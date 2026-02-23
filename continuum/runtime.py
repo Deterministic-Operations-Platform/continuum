@@ -12,7 +12,7 @@ from time import sleep
 from typing import Any, Protocol
 import uuid
 
-from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError
+from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError, StepExecutionError
 from continuum.evidence import EvidenceCollector
 from continuum.plugins import (
     PluginRegistry,
@@ -21,7 +21,7 @@ from continuum.plugins import (
     render_templates,
     resolve_attach_files,
 )
-from continuum.scenario import Scenario
+from continuum.scenario import Scenario, ScenarioStep
 
 
 class Runtime(Protocol):
@@ -93,21 +93,33 @@ class DeterministicRuntime:
         stop_services: bool = False,
         reuse_sessions: bool = True,
         resume_run_id: str | None = None,
+        # backwards-compatible knobs used in tests
+        resume_id: str | None = None,
+        rerun_selectors: tuple[str, ...] | list[str] = (),
+        from_failure: bool = False,
+        from_selector: str | None = None,
+        to_selector: str | None = None,
+        only_selectors: tuple[str, ...] | list[str] = (),
+        skip_selectors: tuple[str, ...] | list[str] = (),
+        no_cleanup: bool = False,
+        cli_vars: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         resolved_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         run_dir = Path("runs") / resolved_run_id
+        effective_resume_id = resume_run_id or resume_id
+
         warnings = [
             f"step '{step.name}' uses legacy with.retries/backoffMs shorthand; normalized into step.retry"
             for step in [*scenario.steps, *scenario.cleanup_steps]
             if step.legacy_retry_used
         ]
 
-        previous_summary, previous_context = self._load_resume_bundle(resume_id)
+        previous_summary, previous_context = self._load_resume_bundle(effective_resume_id)
         prev_status_by_key = self._build_previous_status_map(previous_summary)
         prev_vars = (previous_context or {}).get("vars", {})
 
-        merged_vars = _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars))
-        merged_vars = _deep_merge(merged_vars, dict(cli_vars or {}))
+        vars_payload = _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars))
+        vars_payload = _deep_merge(vars_payload, dict(cli_vars or {}))
 
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
@@ -130,9 +142,26 @@ class DeterministicRuntime:
         cleanup_steps: list[dict[str, Any]] = []
         failure: dict[str, str] | None = None
 
+        first_failed_index = self._first_failed_index(previous_summary) if from_failure else None
+
         for index, step in enumerate(scenario.steps):
-            if failure and not step.always:
+            should_skip = self._should_skip_step(
+                step=step,
+                index=index,
+                scenario=scenario,
+                from_selector=from_selector,
+                to_selector=to_selector,
+                only_selectors=tuple(only_selectors),
+                skip_selectors=tuple(skip_selectors),
+                from_failure_index=first_failed_index,
+                prev_status_by_key=prev_status_by_key,
+                rerun_selectors=tuple(rerun_selectors),
+                failure_present=failure is not None,
+            )
+            if should_skip is not None:
+                summary_steps.append(self._skipped_step(step, index, should_skip, context=context))
                 continue
+
             step_summary = self._run_one(step=step, step_index=index, context=context)
             summary_steps.append(step_summary)
             if step_summary.get("publish"):
@@ -146,19 +175,16 @@ class DeterministicRuntime:
             if not step_summary["ok"] and failure is None:
                 failure = step_summary.get("failure") or {"message": step_summary.get("error", "step failed"), "class": FailureClass.DATA.value}
 
-        for index, step in enumerate(scenario.cleanup_steps):
-            cleanup_summary = self._run_one(step=step, step_index=index, context=context, phase="cleanup")
-            cleanup_steps.append(cleanup_summary)
+        if not no_cleanup:
+            for index, step in enumerate(scenario.cleanup_steps):
+                cleanup_summary = self._run_one(step=step, step_index=index, context=context, phase="cleanup")
+                cleanup_steps.append(cleanup_summary)
 
-        service_cleanup = self._stop_services(
-            scenario=scenario,
-            service_states=service_states,
-            stop_services=stop_services,
-        )
+        service_cleanup = self._stop_services(service_states=service_states, stop_services=stop_services)
 
         summary = {
             "run_id": resolved_run_id,
-            "resumedFrom": resume_id,
+            "resumedFrom": effective_resume_id,
             "scenario": {"name": scenario.name, "rail": scenario.rail, "steps": len(scenario.steps)},
             "status": "failed" if failure else "succeeded",
             "steps": summary_steps,
@@ -179,15 +205,118 @@ class DeterministicRuntime:
         )
         return summary
 
-    def _load_resumed_vars(self, resume_run_id: str | None) -> dict[str, Any]:
+    def _load_resume_bundle(self, resume_run_id: str | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         if not resume_run_id:
-            return {}
-        context_path = Path("runs") / resume_run_id / "context.json"
-        if not context_path.is_file():
+            return None, None
+        run_dir = Path("runs") / resume_run_id
+        summary_path = run_dir / "summary.json"
+        context_path = run_dir / "context.json"
+        if not summary_path.is_file() or not context_path.is_file():
             raise StepExecutionError(f"resume context not found for run '{resume_run_id}'")
-        payload = json.loads(context_path.read_text(encoding="utf-8"))
-        resumed_vars = payload.get("vars")
-        return resumed_vars if isinstance(resumed_vars, dict) else {}
+        return (
+            json.loads(summary_path.read_text(encoding="utf-8")),
+            json.loads(context_path.read_text(encoding="utf-8")),
+        )
+
+    def _build_previous_status_map(self, summary: dict[str, Any] | None) -> dict[str, str]:
+        if not isinstance(summary, dict):
+            return {}
+        out: dict[str, str] = {}
+        for item in summary.get("steps", []):
+            if isinstance(item, dict):
+                key = item.get("key")
+                status = item.get("status")
+                if isinstance(key, str) and isinstance(status, str):
+                    out[key] = status
+        return out
+
+    def _first_failed_index(self, summary: dict[str, Any] | None) -> int | None:
+        if not isinstance(summary, dict):
+            return None
+        for item in summary.get("steps", []):
+            if isinstance(item, dict) and item.get("status") == "failed":
+                idx = item.get("index")
+                if isinstance(idx, int):
+                    return idx
+        return None
+
+    def _matches_selector(self, step: ScenarioStep, index: int, selector: str) -> bool:
+        sel = str(selector).strip()
+        if not sel:
+            return False
+        step_num = f"{index + 1:02d}"
+        return sel in {step_num, str(index), step.key, step.name, step.type}
+
+    def _selected_by(self, step: ScenarioStep, index: int, selectors: tuple[str, ...]) -> bool:
+        return any(self._matches_selector(step, index, selector) for selector in selectors)
+
+    def _should_skip_step(
+        self,
+        *,
+        step: ScenarioStep,
+        index: int,
+        scenario: Scenario,
+        from_selector: str | None,
+        to_selector: str | None,
+        only_selectors: tuple[str, ...],
+        skip_selectors: tuple[str, ...],
+        from_failure_index: int | None,
+        prev_status_by_key: dict[str, str],
+        rerun_selectors: tuple[str, ...],
+        failure_present: bool,
+    ) -> str | None:
+        if failure_present and not step.always:
+            return "control-flow"
+
+        if from_failure_index is not None and index < from_failure_index:
+            return "control-flow"
+
+        if from_selector:
+            start_idx = self._selector_index(scenario.steps, from_selector)
+            if start_idx is None:
+                raise StepExecutionError(f"Unknown --from selector: {from_selector}")
+            if index < start_idx:
+                return "selector"
+        if to_selector:
+            end_idx = self._selector_index(scenario.steps, to_selector)
+            if end_idx is None:
+                raise StepExecutionError(f"Unknown --to selector: {to_selector}")
+            if index > end_idx:
+                return "selector"
+
+        if only_selectors and not self._selected_by(step, index, only_selectors):
+            return "selector"
+        if skip_selectors and self._selected_by(step, index, skip_selectors):
+            return "selector"
+
+        if prev_status_by_key and step.key in prev_status_by_key and step.key not in rerun_selectors:
+            if prev_status_by_key.get(step.key) == "succeeded":
+                return "resume:succeeded"
+
+        return None
+
+    def _selector_index(self, steps: tuple[ScenarioStep, ...], selector: str) -> int | None:
+        for i, step in enumerate(steps):
+            if self._matches_selector(step, i, selector):
+                return i
+        return None
+
+    def _skipped_step(self, step: ScenarioStep, index: int, reason: str, *, context: dict[str, Any]) -> dict[str, Any]:
+        payload = {
+            "index": index,
+            "name": step.name,
+            "key": step.key,
+            "type": step.type,
+            "phase": "execution",
+            "status": "skipped",
+            "ok": True,
+            "skipReason": reason,
+            "attempts": [],
+            "publish": {},
+            "exports": {},
+        }
+        context["write_json"](context["step_dir"](index, step.name), "skipped.json", payload)
+        return payload
 
     def _session_registry_path(self) -> Path:
         return Path("runs") / ".service-sessions.json"
@@ -251,7 +380,7 @@ class DeterministicRuntime:
         self._write_session_registry(registry)
         return service_states
 
-    def _stop_services(self, *, scenario: Scenario, service_states: dict[str, dict[str, Any]], stop_services: bool) -> dict[str, Any]:
+    def _stop_services(self, *, service_states: dict[str, dict[str, Any]], stop_services: bool) -> dict[str, Any]:
         cleanup: dict[str, Any] = {}
         if not service_states:
             return cleanup
@@ -343,7 +472,7 @@ class DeterministicRuntime:
                 continue
             cur: Any = details
             ok = True
-            for seg in expr[len("$.details."):].split("."):
+            for seg in expr[len("$.details.") :].split("."):
                 if isinstance(cur, dict) and seg in cur:
                     cur = cur[seg]
                 else:
@@ -352,6 +481,16 @@ class DeterministicRuntime:
             if ok:
                 published[target] = cur
         return published
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in override.items():
+        if isinstance(out.get(key), dict) and isinstance(value, dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
 
 
 def validate_scenario(scenario: Scenario, *, plugin_registry: PluginRegistry, env: dict[str, str] | None = None) -> tuple[list[str], list[str]]:
