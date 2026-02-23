@@ -57,7 +57,7 @@ class EvidenceCollector:
 
         artifacts = [self._artifact_metadata(path) for path in sorted(run_dir.rglob("*")) if path.is_file() and path.name != "manifest.json"]
 
-        manifest_payload = {
+        manifest_data = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": run_id,
             "scenario_source": str(scenario_source),
