@@ -1,22 +1,32 @@
-# Scenario schema (production profile)
+# Scenario Schema (v0.1 Canonical)
 
-Continuum scenarios define deterministic execution, retries/backoff, variable publishing, and guaranteed cleanup.
+Continuum uses one canonical runtime schema for YAML/JSON scenarios.
 
-## Top-level schema
+## Top-level contract
 
 ```yaml
 name: string
 rail: string
-vars:                # optional run variables
-  key: value
-steps:               # required main execution steps
+vars: {}                # optional run variables
+services: {}            # optional service definitions
+steps:                  # required, non-empty
   - name: string
     type: string
-    with:            # plugin input
-      ...
-    publish:         # optional: map vars from step result details
+    key: string         # optional stable selector
+    id: string          # optional alias for key
+    with: {}            # optional plugin input
+    always: false       # optional: run even if prior step failed
+    dependsOn: []       # optional: list of step keys
+    retry:              # optional
+      on: [exception]
+      maxAttempts: 1
+      backoff: fixed
+      baseDelayMs: 0
+      maxDelayMs: 0
+      jitter: 0.0
+    publish:            # optional map from $.details.*
       varName: $.details.someField
-cleanup_steps:       # optional: always runs after steps (best effort)
+cleanup_steps:          # optional best-effort cleanup steps
   - name: string
     type: string
     with: {}
@@ -24,94 +34,51 @@ cleanup_steps:       # optional: always runs after steps (best effort)
 
 ## Templating
 
-`with` fields support interpolation:
+`with` values support interpolation:
 
-- `${runId}` → active run id
-- `${runDir}` → run evidence directory
-- `${env.NAME}` → environment variable lookup
-- `${varName}` → value from scenario `vars` and published step outputs
+- `${runId}` -> active run id
+- `${runDir}` -> run evidence directory
+- `${traceId}` -> active trace id
+- `${env.NAME}` -> environment variable
+- `${vars.someKey}` -> scenario vars or published vars
 
-## Retries and backoff
+## Retries
 
-Every step may define retry controls under `with`:
+Preferred explicit form:
 
 ```yaml
-with:
-  retries: 3
-  backoffMs: 1000
+retry:
+  on: [exception]
+  maxAttempts: 3
+  backoff: fixed
+  baseDelayMs: 1000
+  maxDelayMs: 1000
+  jitter: 0.0
 ```
 
-Runtime records per-attempt metadata in `summary.json`.
+Legacy `with.retries` / `with.backoffMs` is still accepted and normalized.
 
-## Publish outputs to vars
+## Cleanup semantics
 
-Each step can publish values from result details:
+`cleanup_steps` run after `steps` unless `--no-cleanup` is used.
 
-```yaml
-publish:
-  messageId: $.details.requestId
-  traceId: $.details.trace.id
-```
-
-Expressions are dot-path lookups rooted at `$.details`.
-
-## Teardown / cleanup semantics
-
-`cleanup_steps` execute after main `steps` regardless of prior failure. Cleanup failures are captured in summary and can fail the run if no prior failure existed.
-
-## Examples
-
-### 1) ROF flow (skeleton)
+## Example
 
 ```yaml
-name: rof-daily
-rail: rtpay
+name: fednow-camt29
+rail: fednow
+vars:
+  issueKey: RTPAY-123
 steps:
-  - name: run-rof-collection
+  - name: Run Postman
+    key: run_postman
     type: postman.run
     with:
-      collection: collections/rof-daily.postman_collection.json
-      retries: 2
-      backoffMs: 1000
+      collection: postman/camt29.collection.json
+  - name: Verify Mongo
+    type: mongo.verify
+    dependsOn: [run_postman]
+    with:
+      uri: ${env.MONGO_URI}
+      db: payments
 ```
-
-### 2) CAMT-29 flow
-
-```yaml
-name: camt29
-rail: fednow
-steps:
-  - name: send-camt29
-    type: postman.run
-    with:
-      collection: collections/camt29.postman_collection.json
-    publish:
-      camt29Result: $.details.returncode
-```
-
-### 3) CAMT-56 flow with cleanup
-
-```yaml
-name: camt56
-rail: fednow
-steps:
-  - name: start-service
-    type: applauncher.start
-    with:
-      command: ./start-service.sh
-    publish:
-      servicePid: $.details.pid
-  - name: health
-    type: http.health
-    with:
-      url: http://127.0.0.1:8080/health
-      retries: 5
-      backoffMs: 500
-cleanup_steps:
-  - name: stop-service
-    type: applauncher.stop
-    with:
-      pid: ${servicePid}
-```
-
-For a full production-like flow, see `examples/golden-fednow-rtpay.yaml`.

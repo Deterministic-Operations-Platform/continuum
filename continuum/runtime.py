@@ -144,7 +144,7 @@ class DeterministicRuntime:
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
             "run_dir": str(run_dir),
-            "vars": _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars)),
+            "vars": vars_payload,
             "env": dict(os.environ),
             "step_dir": lambda i, n: str(self.evidence_collector.step_dir(run_dir, i, n)),
             "write_json": lambda step_path, filename, payload: self.evidence_collector.write_json(Path(step_path) / filename, payload),
@@ -159,17 +159,9 @@ class DeterministicRuntime:
             reuse_sessions=reuse_sessions,
         )
 
-        selection = self._selection_map(
-            scenario.steps,
-            from_selector=from_selector,
-            to_selector=to_selector,
-            only_selectors=tuple(only_selectors),
-            skip_selectors=tuple(skip_selectors),
-            prev_status_by_key=prev_status_by_key,
-            rerun_selectors=tuple(rerun_selectors),
-            from_failure=from_failure,
-            previous_summary=previous_summary,
-        )
+        failure: dict[str, Any] | None = None
+        summary_steps: list[dict[str, Any]] = []
+        cleanup_steps: list[dict[str, Any]] = []
 
         first_failed_index = self._first_failed_index(previous_summary) if from_failure else None
 

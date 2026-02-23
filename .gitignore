@@ -1,0 +1,17 @@
+# Runtime artifacts
+runs/**
+!runs/.gitkeep
+
+# Python bytecode
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Local temp/work directories
+.tmp/**
+!.tmp/.gitkeep
+.venv/
+.continuum/
+.codex/
+.vscode/
+site/

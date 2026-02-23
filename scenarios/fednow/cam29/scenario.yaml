@@ -1,14 +1,34 @@
 name: fednow-cam29-skeleton
 rail: fednow
-version: 0.1
-lifecycle:
-  plugin: placeholder-lifecycle
+vars:
+  issueKey: CAM29-PLACEHOLDER
+
 steps:
-  - id: step-001
-    name: placeholder-transport
-    type: transport
-    plugin: placeholder-transport
-    input:
-      message: "replace with CAMT.029 request payload"
-evidence:
-  format: json
+  - name: Run CAMT.029 collection
+    key: run_postman
+    type: postman.run
+    with:
+      collection: postman/camt29.collection.json
+      environment: postman/local.environment.json
+
+  - name: Verify persistence
+    type: mongo.verify
+    dependsOn: [run_postman]
+    with:
+      uri: ${env.MONGO_URI}
+      db: rtpay
+      queries:
+        - name: camt29
+          collection: inbound_requests
+          filter:
+            runId: ${runId}
+      assert:
+        - query: camt29
+          op: gte
+          value: 1
+
+cleanup_steps:
+  - name: Stop shared AppLauncher session
+    type: applauncher.session.stop
+    with:
+      session: fednow-cam29

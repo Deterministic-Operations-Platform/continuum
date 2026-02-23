@@ -191,10 +191,12 @@ def _is_pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except ProcessLookupError:
-        return False
     except PermissionError:
         return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False
 
 
 def _check_health(url: str, timeout_sec: int) -> tuple[bool, int | None, str | None]:

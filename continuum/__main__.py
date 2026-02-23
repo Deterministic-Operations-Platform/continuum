@@ -1,22 +1,48 @@
 import argparse
 import json
 from pathlib import Path
+import tempfile
+from typing import Any
 
 try:
     from rich import print as rich_print
 except ModuleNotFoundError:
     rich_print = print
 
-from continuum import ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
+from continuum import __version__, ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
 from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
+
+
+def _status_payload() -> dict[str, Any]:
+    runs_dir = Path("runs")
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    writable = False
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=runs_dir, prefix=".health-", delete=True) as handle:
+            handle.write("ok")
+            handle.flush()
+        writable = True
+    except OSError:
+        writable = False
+
+    return {
+        "status": "ready" if writable else "degraded",
+        "version": __version__,
+        "cwd": str(Path.cwd()),
+        "runs_dir": str(runs_dir.resolve()),
+        "runs_dir_writable": writable,
+        "commands": ["status", "run", "validate", "plan", "publish"],
+        "plugins": sorted(PluginRegistry().available_plugin_names()),
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="continuum", description="Continuum deterministic orchestrator")
     sub = parser.add_subparsers(dest="cmd")
 
-    sub.add_parser("status", help="Show current status / health")
+    status = sub.add_parser("status", help="Show current status / health")
+    status.add_argument("--json", dest="as_json", action="store_true", help="Output health payload as JSON")
 
     run = sub.add_parser("run", help="Run a scenario from a YAML/JSON file")
     run.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -49,7 +75,16 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.cmd == "status":
-        rich_print("[bold green]Continuum[/bold green] deterministic runtime ready")
+        payload = _status_payload()
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return
+        style = "bold green" if payload["status"] == "ready" else "bold yellow"
+        rich_print(f"[{style}]Continuum[/{style}] deterministic runtime ready")
+        rich_print(f"Version: [bold]{payload['version']}[/bold]")
+        rich_print(f"Runs dir: [bold]{payload['runs_dir']}[/bold] (writable={payload['runs_dir_writable']})")
+        rich_print(f"Commands: [bold]{', '.join(payload['commands'])}[/bold]")
+        rich_print(f"Plugins ({len(payload['plugins'])}): [bold]{', '.join(payload['plugins'])}[/bold]")
         return
 
     if args.cmd == "run":
@@ -93,12 +128,12 @@ def main() -> None:
         scenario = load_scenario(args.scenario)
         errors, warnings = validate_scenario(scenario, plugin_registry=PluginRegistry())
         for warning in warnings:
-            print(f"[yellow]WARN[/yellow] {warning}")
+            rich_print(f"[yellow]WARN[/yellow] {warning}")
         if errors:
             for error in errors:
-                print(f"[red]ERROR[/red] {error}")
+                rich_print(f"[red]ERROR[/red] {error}")
             raise SystemExit(1)
-        print("[green]OK[/green] scenario validates")
+        rich_print("[green]OK[/green] scenario validates")
         return
 
     if args.cmd == "plan":
@@ -111,7 +146,7 @@ def main() -> None:
         if args.run_id:
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "plan.json").write_text(json.dumps(plan_payload, indent=2, sort_keys=True), encoding="utf-8")
-            print(f"[green]Wrote[/green] {run_dir / 'plan.json'}")
+            rich_print(f"[green]Wrote[/green] {run_dir / 'plan.json'}")
         return
 
     if args.cmd == "publish":
@@ -121,8 +156,8 @@ def main() -> None:
             site_dir=Path(args.site_dir),
             keep_runs=args.keep_runs,
         )
-        print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
-        print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
+        rich_print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
+        rich_print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
         return
 
     parser.print_help()

@@ -1,9 +1,0 @@
-{
-  "runId": "run-fednow-fix-smoke",
-  "artifacts": [
-    "scenario.yaml",
-    "summary.json",
-    "events.log",
-    "manifest.json"
-  ]
-}

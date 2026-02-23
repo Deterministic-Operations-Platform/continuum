@@ -1,147 +1,57 @@
-# Core Contracts and Evidence Engine
+# Core Contracts (Python v0.1)
 
-This document defines the minimal interfaces for scenario execution, plugin integration, and immutable evidence output.
+This document describes the active runtime contracts implemented by the Python engine in `continuum/`.
 
-## 1) Scenario Contract
+## Runtime scope
 
-A **Scenario** is declarative input to a run.
+- Deterministic scenario execution
+- Plugin-based step dispatch
+- Resume/selective execution controls
+- Evidence emission for every run (success or failure)
 
-```ts
-interface Scenario {
-  name: string;
-  rail: string;
-  lifecycle?: LifecycleConfig;
-  steps: ScenarioStep[];
-  evidence: EvidenceExportStrategy;
-}
-```
+## Scenario contract
 
-Required fields:
-- `name`
-- `rail` (informational label)
-- `steps[]` (ordered)
-- `evidence` (export policy)
+Top-level:
 
-Optional:
-- `lifecycle`
+- `name` (required)
+- `rail` (required)
+- `vars` (optional mapping)
+- `services` (optional mapping)
+- `steps` (required non-empty array)
+- `cleanup_steps` (optional array)
 
-## 2) Execution Plan Contract
+Step-level:
 
-An **ExecutionPlan** is a normalized in-memory object derived from a Scenario.
+- `name` (required non-empty string)
+- `type` (required non-empty string)
+- `key` or `id` (optional stable selector)
+- `with` (optional mapping)
+- `always` (optional boolean)
+- `dependsOn` (optional array of step keys)
+- `retry` (optional retry policy)
+- `publish` (optional map of `$.details.*` expressions)
 
-```ts
-interface ExecutionPlan {
-  runId: string;
-  scenario: Scenario;
-  lifecycle?: ResolvedLifecyclePlan;
-  steps: ResolvedStepPlan[];
-  evidencePolicy: EvidencePolicy;
-  createdAt: string;
-}
-```
+## CLI contract
 
-Execution plan guarantees:
-- Plugin references are resolved.
-- Step order and dependencies are validated.
-- Evidence policies are precomputed.
+Executable commands:
 
-## 3) Runtime Contract
+- `continuum status`
+- `continuum run <scenario>`
+- `continuum validate <scenario>`
+- `continuum plan <scenario>`
+- `continuum publish --run-id <id>`
 
-Runtime responsibilities:
-- Deterministic step execution
-- Step-level timeout and retry handling (policy-driven)
-- State transitions
-- Structured result generation
-- Error classification
+## Evidence contract
 
-Runtime constraints:
-- Must **not** embed rail-specific business rules.
-- Must **not** call Postman/Mongo/HTTP directly; all I/O must go through plugins.
+Each run under `runs/<run-id>/` always includes:
 
-## 4) Plugin Contracts
+- `scenario.yaml`
+- `context.json`
+- `summary.json`
+- `manifest.json`
 
-### Transport Plugin
-Executes requests (HTTP, Postman, gRPC, etc.).
+`events.log` may also exist depending on runtime/plugin behavior.
 
-Input/Output expectations:
-- request definition input
-- structured response output
-- evidence artifacts (request/response + metadata)
+## Notes on non-Python implementations
 
-### Verification Plugin
-Validates effects (DB state, logs, transitions).
-
-Input/Output expectations:
-- query/assertion definitions
-- structured verification result
-- evidence artifacts (query/snapshot/results)
-
-### Lifecycle Plugin
-Prepares and validates environment.
-
-Input/Output expectations:
-- optional start/stop hooks
-- readiness checks
-- evidence artifacts (health/logs)
-
-## 5) Evidence Engine
-
-Evidence is an immutable artifact set created for **every** run (including failures).
-
-Evidence contents include:
-- Scenario definition used
-- Step inputs
-- Step outputs
-- Timestamps and durations
-- Optional environment metadata
-- Checksums for integrity
-
-### Evidence requirements
-- Always emitted, even on failure.
-- Organized by run id + scenario name + timestamp.
-- Machine-readable, stable artifact format.
-
-## 6) Suggested Evidence Bundle Structure
-
-```text
-runs/
-  <scenario-name>/
-    <run-id>-<timestamp>/
-      manifest.json
-      scenario.json
-      environment.json
-      lifecycle/
-        start.json
-        readiness.json
-        stop.json
-      steps/
-        001-<step-name>/
-          input.json
-          output.json
-          artifacts/
-            request.json
-            response.json
-            metadata.json
-            checksums.sha256
-        002-<step-name>/
-          ...
-      summary.json
-      checksums.sha256
-```
-
-### Suggested file semantics
-- `manifest.json`: index of bundle files, checksums, versions.
-- `summary.json`: run status, timings, failed step, error classification.
-- `checksums.sha256`: integrity hash list for all evidence files.
-
-## 7) Error Classification (recommended)
-
-Standard runtime categories:
-- `timeout`
-- `plugin_error`
-- `assertion_failed`
-- `dependency_failed`
-- `configuration_error`
-- `runtime_error`
-
-Consistent classification enables deterministic retries, summary reporting, and policy routing.
+TS/Java implementations are currently non-authoritative and staged under `experimental/` until they implement this same contract.

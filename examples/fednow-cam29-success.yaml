@@ -1,23 +1,24 @@
 name: fednow-cam29-success
 rail: fednow
-
-preflight:
-  - env:
-      name: PATH
-
-lifecycle:
-  start:
-    - applauncher
+vars:
+  issueKey: CAM29-LOCAL
 
 steps:
-  - send:
-      via: transport-postman
-      requestRef: cam29-valid
-  - verify:
-      via: verify-mongo
-      collection: inbound_requests
-      expect:
-        addMeToMessage: true
+  - name: Start AppLauncher service
+    key: start_service
+    type: applauncher.start
+    with:
+      command: python
+      args: ["-m", "http.server", "8085"]
+      cwd: .
 
-evidence:
-  export: audit-bundle
+  - name: Verify health endpoint
+    type: http.health
+    dependsOn: [start_service]
+    with:
+      url: http://127.0.0.1:8085
+      timeoutSec: 5
+
+cleanup_steps:
+  - name: Stop AppLauncher service
+    type: applauncher.stop
