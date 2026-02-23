@@ -72,3 +72,6 @@ steps:
 - No UI or web server
 - No Spring Boot
 - Rail logic remains in scenario data + plugins, not in core runtime
+
+## Additional guides
+- GitHub Packages starter: `docs/github-packages-get-started.md`
