@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from time import sleep
 from pathlib import Path
+import time
 from typing import Protocol, Any
 import uuid
 
@@ -23,6 +24,39 @@ class Runtime(Protocol):
         run_id: str | None = None,
     ) -> dict[str, Any]:
         ...
+
+
+def _deterministic_unit(run_id: str, step_key: str, attempt: int) -> float:
+    payload = f"{run_id}:{step_key}:{attempt}".encode("utf-8")
+    digest = hashlib.sha256(payload).digest()
+    int_value = int.from_bytes(digest[:8], "big")
+    return int_value / float(2**64)
+
+
+def compute_delay_ms(run_id: str, step_key: str, attempt: int, retry_cfg: dict[str, Any]) -> int:
+    base_delay_ms = int(retry_cfg["baseDelayMs"])
+    max_delay_ms = int(retry_cfg["maxDelayMs"])
+    backoff_mode = str(retry_cfg["backoff"])
+    jitter = float(retry_cfg["jitter"])
+
+    # attempt is 1-based. delay applies before attempt 2,3,...
+    backoff_index = max(0, attempt - 2)
+
+    if backoff_mode == "exponential":
+        delay_ms = base_delay_ms * (2**backoff_index)
+    elif backoff_mode == "linear":
+        delay_ms = base_delay_ms * (backoff_index + 1)
+    else:
+        delay_ms = base_delay_ms
+
+    delay_ms = min(delay_ms, max_delay_ms)
+
+    if jitter > 0:
+        unit = _deterministic_unit(run_id, step_key, attempt)
+        jitter_factor = (unit * 2.0 - 1.0) * jitter
+        delay_ms = int(max(0, math.floor(delay_ms * (1.0 + jitter_factor))))
+
+    return delay_ms
 
 
 class DeterministicRuntime:
@@ -45,11 +79,17 @@ class DeterministicRuntime:
             "run_dir": str(run_dir),
             "repo_root": str(Path.cwd()),
             "vars": dict(scenario.vars),
-            "env": dict(__import__("os").environ),
+            "env": dict(os.environ),
             "available_plugins": sorted(self.plugin_registry.available_plugin_names()),
+            "step_evidence_dir": None,
+            "attempt": 1,
+            "attemptMax": 1,
         }
 
         def step_dir(step_index: int, step_name: str) -> str:
+            configured_path = context.get("step_evidence_dir")
+            if isinstance(configured_path, str) and configured_path:
+                return configured_path
             return str(self.evidence_collector.step_dir(run_dir, step_index, step_name))
 
         context["step_dir"] = step_dir

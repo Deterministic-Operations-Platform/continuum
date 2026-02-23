@@ -109,6 +109,33 @@ class Scenario:
         return parsed_steps
 
 
+def normalize_retry(raw_step: dict[str, Any]) -> dict[str, Any] | None:
+    retry_raw = raw_step.get("retry")
+    if retry_raw is None and "retries" in raw_step:
+        retry_raw = {"maxAttempts": int(raw_step["retries"]) + 1}
+
+    if not retry_raw:
+        return None
+
+    if not isinstance(retry_raw, dict):
+        raise ScenarioValidationError("retry must be a mapping")
+
+    retry_on = retry_raw.get("on", ["exception"])
+    if isinstance(retry_on, str):
+        retry_on = [retry_on]
+    if not isinstance(retry_on, list) or not all(isinstance(item, str) for item in retry_on):
+        raise ScenarioValidationError("retry.on must be a list of strings")
+
+    return {
+        "on": retry_on,
+        "maxAttempts": int(retry_raw.get("maxAttempts", 1)),
+        "backoff": str(retry_raw.get("backoff", "fixed")),
+        "baseDelayMs": int(retry_raw.get("baseDelayMs", 250)),
+        "maxDelayMs": int(retry_raw.get("maxDelayMs", 10_000)),
+        "jitter": float(retry_raw.get("jitter", 0.0)),
+    }
+
+
 def load_scenario(path: str | Path) -> Scenario:
     scenario_path = Path(path)
     text = scenario_path.read_text(encoding="utf-8")

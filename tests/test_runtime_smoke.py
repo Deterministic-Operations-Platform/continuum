@@ -5,8 +5,27 @@ import sys
 import unittest
 from pathlib import Path
 
+from continuum.evidence import EvidenceCollector
+from continuum.plugins import PluginRegistry, StepResult
+from continuum.runtime import DeterministicRuntime
+from continuum.scenario import Scenario, ScenarioStep
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class FlakyPlugin:
+    type = "test.flaky"
+
+    def __init__(self, fail_attempts: int):
+        self._fail_attempts = fail_attempts
+        self._calls = 0
+
+    def run(self, *, step_name: str, step_with: dict, ctx: dict, step_index: int) -> StepResult:
+        self._calls += 1
+        step_dir = ctx["step_dir"](step_index, step_name)
+        marker = ctx["write_json"](step_dir, "attempt.json", {"attempt": self._calls})
+        return StepResult(ok=self._calls > self._fail_attempts, details={"attempt": self._calls}, evidence_paths=[marker])
 
 
 class ContinuumSmokeTests(unittest.TestCase):
