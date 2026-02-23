@@ -83,6 +83,13 @@ class DeterministicRuntime:
             if step.legacy_retry_used
         ]
 
+        previous_summary, previous_context = self._load_resume_bundle(resume_id)
+        prev_status_by_key = self._build_previous_status_map(previous_summary)
+        prev_vars = (previous_context or {}).get("vars", {})
+
+        merged_vars = _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars))
+        merged_vars = _deep_merge(merged_vars, dict(cli_vars or {}))
+
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
             "run_dir": str(run_dir),
@@ -118,6 +125,7 @@ class DeterministicRuntime:
 
         summary = {
             "run_id": resolved_run_id,
+            "resumedFrom": resume_id,
             "scenario": {"name": scenario.name, "rail": scenario.rail, "steps": len(scenario.steps)},
             "status": "failed" if failure else "succeeded",
             "steps": summary_steps,

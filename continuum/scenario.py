@@ -168,4 +168,5 @@ def load_scenario(path: str | Path) -> Scenario:
         raise ScenarioValidationError("Scenario must be .json, .yaml, or .yml")
     if not isinstance(data, dict):
         raise ScenarioValidationError("Scenario document must be a mapping")
+
     return Scenario.from_mapping(data)

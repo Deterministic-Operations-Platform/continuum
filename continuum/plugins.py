@@ -212,6 +212,7 @@ class PostmanRunPlugin:
         return {"ok": shutil.which("newman") is not None, "missing": ["newman"] if shutil.which("newman") is None else []}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = ctx["step_dir"](step_index, step_name)
         if shutil.which("newman") is None:
             path = ctx["write_json"](
                 ctx["step_dir"](step_index, step_name),

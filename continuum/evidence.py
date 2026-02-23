@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 import hashlib
 import json
 import platform
-from pathlib import Path
 import subprocess
-from typing import Any
 
 
 class EvidenceCollector:
