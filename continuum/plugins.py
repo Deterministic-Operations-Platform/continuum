@@ -9,13 +9,13 @@ import base64
 import json
 import os
 import re
-import shutil
 import subprocess
 import time
 import urllib.error
 import urllib.request
 
 from continuum.errors import PluginResolutionError, StepExecutionError
+from continuum.preflight import which
 
 
 @dataclass(slots=True)
@@ -151,14 +151,29 @@ class PostmanRunPlugin:
     type = "postman.run"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        if shutil.which("newman") is None:
-            raise StepExecutionError("postman.run requires newman installed and available on PATH")
+        step_dir = ctx["step_dir"](step_index, step_name)
+        newman_path = which("newman")
+        if not newman_path:
+            preflight_path = ctx["write_json"](
+                step_dir,
+                "preflight.json",
+                {
+                    "ok": False,
+                    "missing": ["newman"],
+                    "hint": "Install newman (npm i -g newman) and ensure it's on PATH.",
+                },
+            )
+            return StepResult(
+                ok=False,
+                details={"error": "Missing dependency: newman"},
+                evidence_paths=[preflight_path],
+            )
 
         collection = step_with.get("collection")
         if not isinstance(collection, str) or not collection.strip():
             raise StepExecutionError("postman.run requires with.collection")
 
-        step_dir = Path(ctx["step_dir"](step_index, step_name))
+        step_dir = Path(step_dir)
         step_dir.mkdir(parents=True, exist_ok=True)
 
         report_json = step_dir / "newman-report.json"
@@ -201,10 +216,24 @@ class MongoVerifyPlugin:
     type = "mongo.verify"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = ctx["step_dir"](step_index, step_name)
         try:
             from pymongo import MongoClient  # type: ignore
-        except Exception as err:  # noqa: BLE001
-            raise StepExecutionError("mongo.verify requires pymongo installed") from err
+        except Exception:
+            preflight_path = ctx["write_json"](
+                step_dir,
+                "preflight.json",
+                {
+                    "ok": False,
+                    "missing": ["pymongo"],
+                    "hint": "pip install pymongo",
+                },
+            )
+            return StepResult(
+                ok=False,
+                details={"error": "Missing dependency: pymongo"},
+                evidence_paths=[preflight_path],
+            )
 
         uri = step_with.get("uri") or ctx["env"].get("MONGO_URI")
         db_name = step_with.get("db")
@@ -237,7 +266,6 @@ class MongoVerifyPlugin:
             ok = (op == "gte" and actual >= expected) or (op == "lte" and actual <= expected) or (op == "eq" and actual == expected)
             assertions.append({**assertion, "actual": actual, "ok": ok})
 
-        step_dir = ctx["step_dir"](step_index, step_name)
         queries_path = ctx["write_json"](step_dir, "queries.json", step_with.get("queries", []))
         results_path = ctx["write_json"](step_dir, "results.json", results)
         assertions_path = ctx["write_json"](step_dir, "assertions.json", assertions)
@@ -251,6 +279,35 @@ class MongoVerifyPlugin:
 
 
 class JiraPluginBase:
+    def _missing_cfg_env(self, cfg: dict[str, Any], ctx: dict[str, Any]) -> list[str]:
+        required = []
+        if not cfg.get("baseUrl") and not ctx["env"].get("JIRA_BASE_URL"):
+            required.append("JIRA_BASE_URL")
+        if not cfg.get("email") and not ctx["env"].get("JIRA_EMAIL"):
+            required.append("JIRA_EMAIL")
+        if not cfg.get("apiToken") and not ctx["env"].get("JIRA_API_TOKEN"):
+            required.append("JIRA_API_TOKEN")
+        return required
+
+    def _preflight_cfg(self, step_dir: str, cfg: dict[str, Any], ctx: dict[str, Any]) -> StepResult | None:
+        required = self._missing_cfg_env(cfg, ctx)
+        if not required:
+            return None
+        preflight_path = ctx["write_json"](
+            step_dir,
+            "preflight.json",
+            {
+                "ok": False,
+                "missingEnv": required,
+                "hint": "Set env vars or pass baseUrl/email/apiToken in step.with",
+            },
+        )
+        return StepResult(
+            ok=False,
+            details={"error": f"Missing Jira config: {', '.join(required)}"},
+            evidence_paths=[preflight_path],
+        )
+
     def _request(self, method: str, path: str, *, payload: Any, cfg: dict[str, Any], ctx: dict[str, Any]) -> Any:
         base = cfg.get("baseUrl") or ctx["env"].get("JIRA_BASE_URL")
         email = cfg.get("email") or ctx["env"].get("JIRA_EMAIL")
@@ -284,12 +341,16 @@ class JiraFetchPlugin(JiraPluginBase):
     type = "jira.fetch"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = ctx["step_dir"](step_index, step_name)
+        preflight_result = self._preflight_cfg(step_dir, step_with, ctx)
+        if preflight_result:
+            return preflight_result
+
         issue_key = step_with.get("issueKey") or ctx["vars"].get("issueKey")
         if not isinstance(issue_key, str) or not issue_key.strip():
             raise StepExecutionError("jira.fetch requires issueKey")
 
         payload = self._request("GET", f"/rest/api/3/issue/{issue_key}", payload=None, cfg=step_with, ctx=ctx)
-        step_dir = ctx["step_dir"](step_index, step_name)
         issue_path = ctx["write_json"](step_dir, "issue.json", payload)
         return StepResult(ok=True, details={"issueKey": issue_key}, evidence_paths=[issue_path])
 
@@ -298,6 +359,11 @@ class JiraCommentPlugin(JiraPluginBase):
     type = "jira.comment"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = ctx["step_dir"](step_index, step_name)
+        preflight_result = self._preflight_cfg(step_dir, step_with, ctx)
+        if preflight_result:
+            return preflight_result
+
         issue_key = step_with.get("issueKey") or ctx["vars"].get("issueKey")
         if not isinstance(issue_key, str) or not issue_key.strip():
             raise StepExecutionError("jira.comment requires issueKey")
@@ -310,7 +376,6 @@ class JiraCommentPlugin(JiraPluginBase):
             cfg=step_with,
             ctx=ctx,
         )
-        step_dir = ctx["step_dir"](step_index, step_name)
         comment_path = ctx["write_json"](step_dir, "comment.json", payload)
         return StepResult(ok=True, details={"issueKey": issue_key}, evidence_paths=[comment_path])
 
@@ -319,6 +384,11 @@ class JiraAttachPlugin(JiraPluginBase):
     type = "jira.attach"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = ctx["step_dir"](step_index, step_name)
+        preflight_result = self._preflight_cfg(step_dir, step_with, ctx)
+        if preflight_result:
+            return preflight_result
+
         issue_key = step_with.get("issueKey") or ctx["vars"].get("issueKey")
         files = list(step_with.get("files", []))
         if not isinstance(issue_key, str) or not issue_key.strip():
@@ -330,8 +400,6 @@ class JiraAttachPlugin(JiraPluginBase):
         base = step_with.get("baseUrl") or ctx["env"].get("JIRA_BASE_URL")
         email = step_with.get("email") or ctx["env"].get("JIRA_EMAIL")
         token = step_with.get("apiToken") or ctx["env"].get("JIRA_API_TOKEN")
-        if not all([base, email, token]):
-            raise StepExecutionError("Missing Jira config (JIRA_BASE_URL/JIRA_EMAIL/JIRA_API_TOKEN)")
 
         command = [
             "curl",
@@ -352,7 +420,6 @@ class JiraAttachPlugin(JiraPluginBase):
             raise StepExecutionError(f"jira.attach failed: {proc.stderr.strip()}")
 
         payload = json.loads(proc.stdout) if proc.stdout.strip() else []
-        step_dir = ctx["step_dir"](step_index, step_name)
         attachments_path = ctx["write_json"](step_dir, "attachments.json", payload)
         return StepResult(ok=True, details={"issueKey": issue_key, "files": files}, evidence_paths=[attachments_path])
 

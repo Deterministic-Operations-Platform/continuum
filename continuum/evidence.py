@@ -32,6 +32,7 @@ class EvidenceCollector:
         scenario_text: str,
         context_payload: dict[str, Any],
         summary: dict[str, Any],
+        manifest_payload: dict[str, Any] | None = None,
     ) -> Path:
         run_dir = Path("runs") / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -40,7 +41,7 @@ class EvidenceCollector:
         (run_dir / "context.json").write_text(json.dumps(context_payload, indent=2, sort_keys=True), encoding="utf-8")
         (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
-        manifest_payload = {
+        manifest_data = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": run_id,
             "scenario_source": str(scenario_source),
@@ -49,8 +50,10 @@ class EvidenceCollector:
                 for path in sorted((run_dir / "scenario.yaml", run_dir / "context.json", run_dir / "summary.json"), key=lambda item: item.name)
             ],
         }
+        if manifest_payload:
+            manifest_data.update(manifest_payload)
         (run_dir / "manifest.json").write_text(
-            json.dumps(manifest_payload, indent=2, sort_keys=True), encoding="utf-8"
+            json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8"
         )
 
         return run_dir

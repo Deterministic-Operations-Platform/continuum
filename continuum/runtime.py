@@ -9,6 +9,7 @@ import uuid
 
 from continuum.errors import ContinuumError, FailureClass
 from continuum.evidence import EvidenceCollector
+from continuum.preflight import gather_versions
 from continuum.plugins import PluginRegistry, render_templates
 from continuum.scenario import Scenario
 
@@ -61,6 +62,7 @@ class DeterministicRuntime:
         )
 
         started_at = datetime.now(timezone.utc)
+        manifest_payload = gather_versions()
         summary_steps: list[dict[str, Any]] = []
         failure: dict[str, str] | None = None
 
@@ -82,9 +84,10 @@ class DeterministicRuntime:
                     }
                 )
                 if not result.ok:
+                    error_message = str(result.details.get("error") or f"Step returned unsuccessful status: {step.name}")
                     failure = {
-                        "message": f"Step returned unsuccessful status: {step.name}",
-                        "class": FailureClass.EXECUTION.value,
+                        "message": error_message,
+                        "class": FailureClass.DATA.value,
                     }
                     break
             except ContinuumError as err:
@@ -95,7 +98,8 @@ class DeterministicRuntime:
                         "name": step.name,
                         "type": step.type,
                         "ok": False,
-                        "error": str(err),
+                        "details": {"error": str(err)},
+                        "evidence": [],
                         "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
                     }
                 )
@@ -108,7 +112,8 @@ class DeterministicRuntime:
                         "name": step.name,
                         "type": step.type,
                         "ok": False,
-                        "error": str(err),
+                        "details": {"error": str(err)},
+                        "evidence": [],
                         "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
                     }
                 )
@@ -135,6 +140,7 @@ class DeterministicRuntime:
                 "vars": context["vars"],
             },
             summary=summary,
+            manifest_payload=manifest_payload,
         )
         summary["evidence_dir"] = str(run_dir)
         return summary
