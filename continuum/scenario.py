@@ -20,10 +20,18 @@ class ScenarioStep:
 
 
 @dataclass(frozen=True, slots=True)
+class PreflightCheck:
+    kind: str
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class Scenario:
     name: str
     rail: str
     steps: tuple[ScenarioStep, ...]
+    lifecycle_start: tuple[str, ...] = ()
+    preflight: tuple[PreflightCheck, ...] = ()
 
     @staticmethod
     def from_mapping(data: dict[str, Any]) -> "Scenario":
@@ -41,7 +49,6 @@ class Scenario:
             if not isinstance(raw_step, dict):
                 raise ScenarioValidationError(f"Step {index} must be a mapping")
 
-            # v0.1 explicit style: {plugin, action, input}
             if {"plugin", "action"}.issubset(raw_step.keys()):
                 plugin = str(raw_step["plugin"])
                 action = str(raw_step["action"])
@@ -51,7 +58,6 @@ class Scenario:
                 parsed_steps.append(ScenarioStep(plugin=plugin, action=action, input=step_input))
                 continue
 
-            # backward-compatible short style: {send: {via: x, ...}}
             if len(raw_step) != 1:
                 raise ScenarioValidationError(
                     f"Step {index} must either use plugin/action fields or single action mapping"
@@ -63,7 +69,47 @@ class Scenario:
             step_input = {k: v for k, v in payload.items() if k != "via"}
             parsed_steps.append(ScenarioStep(plugin=plugin, action=str(action), input=step_input))
 
-        return Scenario(name=str(data["name"]), rail=str(data["rail"]), steps=tuple(parsed_steps))
+        lifecycle_start = Scenario._parse_lifecycle_start(data.get("lifecycle"))
+        preflight_checks = Scenario._parse_preflight(data.get("preflight"))
+
+        return Scenario(
+            name=str(data["name"]),
+            rail=str(data["rail"]),
+            steps=tuple(parsed_steps),
+            lifecycle_start=tuple(lifecycle_start),
+            preflight=tuple(preflight_checks),
+        )
+
+    @staticmethod
+    def _parse_lifecycle_start(raw_lifecycle: Any) -> list[str]:
+        if raw_lifecycle is None:
+            return []
+        if not isinstance(raw_lifecycle, dict):
+            raise ScenarioValidationError("lifecycle must be a mapping when provided")
+        raw_start = raw_lifecycle.get("start", [])
+        if not isinstance(raw_start, list):
+            raise ScenarioValidationError("lifecycle.start must be an array")
+        services = [str(item).strip() for item in raw_start]
+        if any(not service for service in services):
+            raise ScenarioValidationError("lifecycle.start entries must be non-empty")
+        return services
+
+    @staticmethod
+    def _parse_preflight(raw_preflight: Any) -> list[PreflightCheck]:
+        if raw_preflight is None:
+            return []
+        if not isinstance(raw_preflight, list):
+            raise ScenarioValidationError("preflight must be an array when provided")
+
+        checks: list[PreflightCheck] = []
+        for index, raw_check in enumerate(raw_preflight):
+            if not isinstance(raw_check, dict) or len(raw_check) != 1:
+                raise ScenarioValidationError(f"preflight[{index}] must be a single-key mapping")
+            kind, params = next(iter(raw_check.items()))
+            if not isinstance(params, dict):
+                raise ScenarioValidationError(f"preflight[{index}] payload must be a mapping")
+            checks.append(PreflightCheck(kind=str(kind), params=params))
+        return checks
 
 
 def load_scenario(path: str | Path) -> Scenario:

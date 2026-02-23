@@ -4,8 +4,9 @@ Continuum is a deterministic, plugin-based orchestration engine for high-stakes 
 
 ## v0.1 Deliverables
 - Minimal CLI (`continuum status`, `continuum run <scenario>`)
+- End-to-end deterministic run phases: preflight checks, lifecycle startup, transport/verification execution
 - Scenario loader for YAML and JSON
-- Evidence folder per run: `runs/<run-id>/scenario.*` + `runs/<run-id>/summary.json`
+- Evidence folder per run: `runs/<run-id>/scenario.*` + `summary.json` + `events.log` + `manifest.json`
 - Core interfaces for `Runtime`, `Plugin`, and `EvidenceCollector`
 
 ## Quick start
@@ -29,6 +30,19 @@ If a plugin is missing, execution fails deterministically and still writes evide
 - `FileEvidenceCollector` now rejects blank artifact names and uses absolute, normalized path checks before writing evidence files.
 - Scope intentionally excludes Java CLI command behavior (`ContinuumCli.java`) unless required for correctness.
 - Reference guide: `docs/fednow-local-run-guide.md`
+
+## End-to-end execution model
+`continuum run` now enforces a deterministic sequence:
+1. Preflight
+   - Required plugins are available
+   - Run artifact directory is writable
+   - Scenario-defined checks (for example required environment variables) pass
+2. Lifecycle startup
+   - Services listed under `lifecycle.start` are started through lifecycle plugins
+3. Scenario execution
+   - Transport and verification steps run in order
+4. Evidence emission
+   - `summary.json`, `events.log`, and `manifest.json` are written for every run
 
 ## Scenario format (v0.1)
 `steps` support either explicit plugin/action format:
