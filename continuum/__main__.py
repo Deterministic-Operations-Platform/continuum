@@ -1,7 +1,10 @@
 import argparse
 from pathlib import Path
 
-from rich import print
+try:
+    from rich import print as rich_print
+except ModuleNotFoundError:
+    rich_print = print
 
 from continuum import (
     ContinuumError,
@@ -23,7 +26,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.cmd == "status":
-        print("[bold green]Continuum[/bold green] deterministic runtime ready ✅")
+        rich_print("[bold green]Continuum[/bold green] deterministic runtime ready")
         return
 
     if args.cmd == "run":
@@ -33,13 +36,16 @@ def main() -> None:
             runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
             summary = runtime.execute(scenario=scenario, scenario_source=scenario_path, run_id=args.run_id)
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
-            print(f"Run [bold]{summary['run_id']}[/bold] finished with [{status_style}]{summary['status']}[/{status_style}]")
-            print(f"Evidence: [bold]{summary['evidence_dir']}[/bold]")
+            rich_print(
+                f"Run [bold]{summary['run_id']}[/bold] finished with "
+                f"[{status_style}]{summary['status']}[/{status_style}]"
+            )
+            rich_print(f"Evidence: [bold]{summary['evidence_dir']}[/bold]")
             if summary["failure"]:
-                print(f"Failure: [bold red]{summary['failure']['message']}[/bold red]")
+                rich_print(f"Failure: [bold red]{summary['failure']['message']}[/bold red]")
                 raise SystemExit(1)
         except ContinuumError as err:
-            print(f"[bold red]Execution error[/bold red]: {err} ({err.failure_class.value})")
+            rich_print(f"[bold red]Execution error[/bold red]: {err} ({err.failure_class.value})")
             raise SystemExit(1) from err
         return
 
