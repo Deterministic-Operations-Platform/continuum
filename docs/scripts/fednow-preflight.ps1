@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 $failures = New-Object System.Collections.Generic.List[string]
 
 function Add-Failure([string]$message) {
@@ -29,7 +30,36 @@ function Test-Http([string]$name, [string]$url) {
       Add-Failure "$name returned non-ready status ($url -> HTTP $($response.StatusCode))"
     }
   } catch {
-    Add-Failure "$name unreachable at $url ($($_.Exception.Message))"
+    $exceptionMessage = $_.Exception.Message
+    if ($_.Exception.InnerException) {
+      $exceptionMessage = "$exceptionMessage | Inner: $($_.Exception.InnerException.Message)"
+    }
+
+    Add-Failure "$name unreachable at $url ($exceptionMessage)"
+  }
+}
+
+function Test-MongoTcp([string]$host, [int]$port) {
+  if (Get-Command -Name Test-NetConnection -ErrorAction SilentlyContinue) {
+    $tcp = Test-NetConnection -ComputerName $host -Port $port -WarningAction SilentlyContinue
+    return [bool]$tcp.TcpTestSucceeded
+  }
+
+  $tcpClient = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $connectTask = $tcpClient.ConnectAsync($host, $port)
+    $connectedInTime = $connectTask.Wait([TimeSpan]::FromSeconds($TimeoutSec))
+    return ($connectedInTime -and $tcpClient.Connected)
+  } finally {
+    $tcpClient.Dispose()
+  }
+}
+
+function Test-ScenarioPlugin([string]$scenarioText, [string]$name, [string]$pattern) {
+  if ($scenarioText -match $pattern) {
+    Add-Pass "Scenario references plugin: $name"
+  } else {
+    Add-Failure "Scenario does not reference plugin: $name"
   }
 }
 
@@ -42,32 +72,18 @@ if (Test-Path -Path $ScenarioPath -PathType Leaf) {
 }
 
 if (Test-Path -Path $ScenarioPath -PathType Leaf) {
+  Add-Pass "Scanning scenario for plugin references: $ScenarioPath"
   $scenarioText = Get-Content -Path $ScenarioPath -Raw
-  if ($scenarioText -match "applauncher") {
-    Add-Pass "Scenario references lifecycle plugin: applauncher"
-  } else {
-    Add-Failure "Scenario does not reference applauncher"
-  }
-
-  if ($scenarioText -match "transport-postman") {
-    Add-Pass "Scenario references transport plugin: transport-postman"
-  } else {
-    Add-Failure "Scenario does not reference transport-postman"
-  }
-
-  if ($scenarioText -match "verify-mongo") {
-    Add-Pass "Scenario references verify plugin: verify-mongo"
-  } else {
-    Add-Failure "Scenario does not reference verify-mongo"
-  }
+  Test-ScenarioPlugin -scenarioText $scenarioText -name "applauncher" -pattern '(?im)^\s*(plugin|name|type)\s*:\s*["'"'"']?applauncher["'"'"']?\s*$'
+  Test-ScenarioPlugin -scenarioText $scenarioText -name "transport-postman" -pattern '(?im)^\s*(plugin|name|type)\s*:\s*["'"'"']?transport-postman["'"'"']?\s*$'
+  Test-ScenarioPlugin -scenarioText $scenarioText -name "verify-mongo" -pattern '(?im)^\s*(plugin|name|type)\s*:\s*["'"'"']?verify-mongo["'"'"']?\s*$'
 }
 
 Test-Http -name "AppLauncher" -url $AppLauncherHealthUrl
 Test-Http -name "Transport" -url $TransportHealthUrl
 
 try {
-  $tcp = Test-NetConnection -ComputerName $MongoHost -Port $MongoPort -WarningAction SilentlyContinue
-  if ($tcp.TcpTestSucceeded) {
+  if (Test-MongoTcp -host $MongoHost -port $MongoPort) {
     Add-Pass "Mongo reachable ($MongoHost:$MongoPort)"
   } else {
     Add-Failure "Mongo not reachable ($MongoHost:$MongoPort)"
@@ -83,7 +99,7 @@ try {
     $runsRoot = Resolve-Path -Path $RunsPath
   }
 
-  $probeDir = Join-Path $runsRoot.Path "preflight-probe"
+  $probeDir = Join-Path $runsRoot.Path ("preflight-probe-{0}-{1}" -f $PID, (Get-Date -Format "yyyyMMddHHmmssfff"))
   New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
   $probeFile = Join-Path $probeDir "write-test.txt"
   Set-Content -Path $probeFile -Value "ok" -Encoding UTF8
