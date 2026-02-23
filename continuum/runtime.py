@@ -111,6 +111,64 @@ class DeterministicRuntime:
 
         for index, step in enumerate(scenario.steps):
             step_started = datetime.now(timezone.utc)
+            try:
+                result = plugin.run(step_name=step.name, step_with=step_with, ctx=context, step_index=index)
+
+                exports = result.exports or {}
+                if exports:
+                    context["vars"].update(exports)
+                    steps_ns = context["vars"].setdefault("steps", {})
+                    if not isinstance(steps_ns, dict):
+                        steps_ns = {}
+                        context["vars"]["steps"] = steps_ns
+                    steps_ns[step.key] = exports
+
+                summary_steps.append(
+                    {
+                        "index": index,
+                        "name": step.name,
+                        "key": step.key,
+                        "type": step.type,
+                        "ok": result.ok,
+                        "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
+                        "details": result.details,
+                        "evidence": result.evidence_paths,
+                        "exports": exports,
+                    }
+                )
+                if not result.ok:
+                    failure = {
+                        "message": f"Step returned unsuccessful status: {step.name}",
+                        "class": FailureClass.EXECUTION.value,
+                    }
+                    break
+            except ContinuumError as err:
+                failure = {"message": str(err), "class": err.failure_class.value}
+                summary_steps.append(
+                    {
+                        "index": index,
+                        "name": step.name,
+                        "key": step.key,
+                        "type": step.type,
+                        "ok": False,
+                        "error": str(err),
+                        "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
+                    }
+                )
+                break
+            except Exception as err:  # noqa: BLE001
+                failure = {"message": str(err), "class": FailureClass.INFRA.value}
+                summary_steps.append(
+                    {
+                        "index": index,
+                        "name": step.name,
+                        "key": step.key,
+                        "type": step.type,
+                        "ok": False,
+                        "error": str(err),
+                        "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
+                    }
+                )
             execution = self._run_step_with_retries(step=step, context=context, step_index=index, started=step_started)
             summary_steps.append(execution)
             if execution.get("publish"):

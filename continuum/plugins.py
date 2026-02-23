@@ -24,6 +24,7 @@ class StepResult:
     ok: bool
     details: dict[str, Any]
     evidence_paths: list[str]
+    exports: dict[str, Any] | None = None
 
 
 class Plugin(Protocol):
@@ -34,6 +35,15 @@ class Plugin(Protocol):
 
 
 def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
+    def lookup(path: str) -> Any:
+        current: Any = ctx
+        for part in path.split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return ""
+        return current
+
     if isinstance(value, str):
         pattern = re.compile(r"\$\{([^}]+)\}")
 
@@ -47,6 +57,7 @@ def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
                 env_key = key[4:]
                 return str(ctx["env"].get(env_key, ""))
             if key.startswith("vars."):
+                return str(lookup(key))
                 var_key = key[5:]
                 return str(ctx["vars"].get(var_key, ""))
             return str(ctx["vars"].get(key, ""))
@@ -177,7 +188,12 @@ class AppLauncherStartPlugin:
             "pid.json",
             {"pid": process.pid, "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
         )
-        return StepResult(ok=True, details={"pid": process.pid}, evidence_paths=[out_log, err_log, pid_path])
+        return StepResult(
+            ok=True,
+            details={"pid": process.pid},
+            evidence_paths=[out_log, err_log, pid_path],
+            exports={"applauncherPid": process.pid},
+        )
 
 
 class AppLauncherStopPlugin:
@@ -228,7 +244,12 @@ class HttpHealthPlugin:
 
         step_dir = ctx["step_dir"](step_index, step_name)
         health_path = ctx["write_json"](step_dir, "health.json", result)
-        return StepResult(ok=bool(result["ok"]), details=result, evidence_paths=[health_path])
+        return StepResult(
+            ok=bool(result["ok"]),
+            details=result,
+            evidence_paths=[health_path],
+            exports={"healthOk": bool(result["ok"]), "healthStatus": result.get("status")},
+        )
 
 
 class PostmanRunPlugin:
@@ -291,6 +312,11 @@ class PostmanRunPlugin:
             ok=proc.returncode == 0,
             details={"returncode": proc.returncode},
             evidence_paths=[summary_path, str(report_json), str(report_html), str(console_log)],
+            exports={
+                "newmanHtml": str(report_html),
+                "newmanJson": str(report_json),
+                "failures": 0 if proc.returncode == 0 else 1,
+            },
         )
 
 
@@ -357,6 +383,10 @@ class MongoVerifyPlugin:
             ok=all(item["ok"] for item in assertions),
             details={"assertions": assertions},
             evidence_paths=[queries_path, results_path, assertions_path],
+            exports={
+                "mongoOk": all(item["ok"] for item in assertions),
+                "assertFailed": sum(1 for item in assertions if not item["ok"]),
+            },
         )
 
 
@@ -434,7 +464,12 @@ class JiraFetchPlugin(JiraPluginBase):
 
         payload = self._request("GET", f"/rest/api/3/issue/{issue_key}", payload=None, cfg=step_with, ctx=ctx)
         issue_path = ctx["write_json"](step_dir, "issue.json", payload)
-        return StepResult(ok=True, details={"issueKey": issue_key}, evidence_paths=[issue_path])
+        return StepResult(
+            ok=True,
+            details={"issueKey": issue_key},
+            evidence_paths=[issue_path],
+            exports={"jiraIssueId": payload.get("id"), "jiraKey": payload.get("key", issue_key)},
+        )
 
 
 class JiraCommentPlugin(JiraPluginBase):
@@ -459,7 +494,12 @@ class JiraCommentPlugin(JiraPluginBase):
             ctx=ctx,
         )
         comment_path = ctx["write_json"](step_dir, "comment.json", payload)
-        return StepResult(ok=True, details={"issueKey": issue_key}, evidence_paths=[comment_path])
+        return StepResult(
+            ok=True,
+            details={"issueKey": issue_key},
+            evidence_paths=[comment_path],
+            exports={"jiraCommentId": payload.get("id")},
+        )
 
 
 class JiraAttachPlugin(JiraPluginBase):

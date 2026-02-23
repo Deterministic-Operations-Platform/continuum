@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import json
+import re
 
 import yaml
 
@@ -16,8 +17,21 @@ from continuum.errors import ScenarioValidationError
 class ScenarioStep:
     name: str
     type: str
+    key: str
     with_: dict[str, Any]
     publish: dict[str, str]
+
+
+def step_key(step: dict[str, Any], index: int) -> str:
+    explicit_id = step.get("id")
+    if isinstance(explicit_id, str) and explicit_id.strip():
+        return explicit_id.strip()
+
+    raw_name = str(step.get("name") or f"step_{index + 1}")
+    slug = re.sub(r"[^a-z0-9]+", "_", raw_name.strip().lower()).strip("_")
+    if not slug:
+        slug = f"step_{index + 1}"
+    return f"{index + 1:02d}_{slug}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +87,8 @@ class Scenario:
                 step_type = str(raw_step["type"])
                 step_with = raw_step.get("with", {})
                 if not isinstance(step_with, dict):
+                    raise ScenarioValidationError(f"Step {index} with must be a mapping")
+                parsed_steps.append(ScenarioStep(name=name, type=step_type, key=step_key(raw_step, index), with_=step_with))
                     raise ScenarioValidationError(f"{label} step {index} with must be a mapping")
                 publish = raw_step.get("publish", {})
                 if publish is None:
@@ -90,6 +106,12 @@ class Scenario:
                 if not isinstance(step_input, dict):
                     raise ScenarioValidationError(f"{label} step {index} input must be a mapping")
                 parsed_steps.append(
+                    ScenarioStep(
+                        name=f"{plugin}.{action}",
+                        type=f"legacy.{plugin}.{action}",
+                        key=step_key(raw_step, index),
+                        with_=step_input,
+                    )
                     ScenarioStep(name=f"{plugin}.{action}", type=f"legacy.{plugin}.{action}", with_=step_input, publish={})
                 )
                 continue
@@ -104,6 +126,12 @@ class Scenario:
             plugin = str(payload.get("via", "default"))
             step_with = {k: v for k, v in payload.items() if k != "via"}
             parsed_steps.append(
+                ScenarioStep(
+                    name=f"{plugin}.{action}",
+                    type=f"legacy.{plugin}.{action}",
+                    key=step_key(raw_step, index),
+                    with_=step_with,
+                )
                 ScenarioStep(name=f"{plugin}.{action}", type=f"legacy.{plugin}.{action}", with_=step_with, publish={})
             )
         return parsed_steps

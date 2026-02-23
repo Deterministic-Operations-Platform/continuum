@@ -17,8 +17,9 @@ steps:
       url: http://localhost:8080
       timeoutSec: 10
 
-  - name: Run Postman ROF collection
+  - name: Run Postman ROF
     type: postman.run
+    id: run_postman
     with:
       collection: postman/ROF.collection.json
       environment: postman/local.environment.json
