@@ -31,6 +31,25 @@ class Runtime(Protocol):
     def execute(self, scenario: Scenario, scenario_source: Path, scenario_text: str, run_id: str | None = None) -> dict[str, Any]: ...
 
 
+def _step_key(step: ScenarioStep, index: int) -> str:
+    key = getattr(step, "key", "")
+    if isinstance(key, str) and key.strip():
+        return key
+    return f"{index + 1:02d}_{step.name}"
+
+
+def _normalized_retry(step: ScenarioStep, rendered_with: dict[str, Any]) -> dict[str, Any]:
+    retry = step.retry or {}
+    return {
+        "on": list(retry.get("on", ["exception"])),
+        "maxAttempts": int(retry.get("maxAttempts", 1)),
+        "backoff": str(retry.get("backoff", "fixed")),
+        "baseDelayMs": int(retry.get("baseDelayMs", rendered_with.get("backoffMs", 0))),
+        "maxDelayMs": int(retry.get("maxDelayMs", retry.get("baseDelayMs", rendered_with.get("backoffMs", 0)))),
+        "jitter": float(retry.get("jitter", 0.0)),
+    }
+
+
 def build_plan(
     scenario: Scenario,
     *,
