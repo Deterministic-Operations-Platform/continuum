@@ -17,6 +17,7 @@ class ScenarioStep:
     name: str
     type: str
     with_: dict[str, Any]
+    retry: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +49,9 @@ class Scenario:
                 step_with = raw_step.get("with", {})
                 if not isinstance(step_with, dict):
                     raise ScenarioValidationError(f"Step {index} with must be a mapping")
-                parsed_steps.append(ScenarioStep(name=name, type=step_type, with_=step_with))
+                parsed_steps.append(
+                    ScenarioStep(name=name, type=step_type, with_=step_with, retry=normalize_retry(raw_step))
+                )
                 continue
 
             # Backward-compat support for legacy plugin/action schema.
@@ -59,7 +62,12 @@ class Scenario:
                 if not isinstance(step_input, dict):
                     raise ScenarioValidationError(f"Step {index} input must be a mapping")
                 parsed_steps.append(
-                    ScenarioStep(name=f"{plugin}.{action}", type=f"legacy.{plugin}.{action}", with_=step_input)
+                    ScenarioStep(
+                        name=f"{plugin}.{action}",
+                        type=f"legacy.{plugin}.{action}",
+                        with_=step_input,
+                        retry=normalize_retry(raw_step),
+                    )
                 )
                 continue
 
@@ -73,7 +81,12 @@ class Scenario:
             plugin = str(payload.get("via", "default"))
             step_with = {k: v for k, v in payload.items() if k != "via"}
             parsed_steps.append(
-                ScenarioStep(name=f"{plugin}.{action}", type=f"legacy.{plugin}.{action}", with_=step_with)
+                ScenarioStep(
+                    name=f"{plugin}.{action}",
+                    type=f"legacy.{plugin}.{action}",
+                    with_=step_with,
+                    retry=normalize_retry(raw_step),
+                )
             )
 
         raw_vars = data.get("vars", {})
@@ -88,6 +101,33 @@ class Scenario:
             steps=tuple(parsed_steps),
             vars=raw_vars,
         )
+
+
+def normalize_retry(raw_step: dict[str, Any]) -> dict[str, Any] | None:
+    retry_raw = raw_step.get("retry")
+    if retry_raw is None and "retries" in raw_step:
+        retry_raw = {"maxAttempts": int(raw_step["retries"]) + 1}
+
+    if not retry_raw:
+        return None
+
+    if not isinstance(retry_raw, dict):
+        raise ScenarioValidationError("retry must be a mapping")
+
+    retry_on = retry_raw.get("on", ["exception"])
+    if isinstance(retry_on, str):
+        retry_on = [retry_on]
+    if not isinstance(retry_on, list) or not all(isinstance(item, str) for item in retry_on):
+        raise ScenarioValidationError("retry.on must be a list of strings")
+
+    return {
+        "on": retry_on,
+        "maxAttempts": int(retry_raw.get("maxAttempts", 1)),
+        "backoff": str(retry_raw.get("backoff", "fixed")),
+        "baseDelayMs": int(retry_raw.get("baseDelayMs", 250)),
+        "maxDelayMs": int(retry_raw.get("maxDelayMs", 10_000)),
+        "jitter": float(retry_raw.get("jitter", 0.0)),
+    }
 
 
 def load_scenario(path: str | Path) -> Scenario:
