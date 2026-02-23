@@ -233,12 +233,25 @@ public class ContinuumCli {
     }
 
     private Path resolveRunDirectory(Path scenarioPath, String runId) {
+        String normalizedRunId = validateRunId(runId);
         Path effectiveRunsRoot = resolveRunsRootForScenario(scenarioPath).toAbsolutePath().normalize();
-        Path runDirectory = effectiveRunsRoot.resolve(runId).normalize();
+        Path runDirectory = effectiveRunsRoot.resolve(normalizedRunId).normalize();
         if (!runDirectory.startsWith(effectiveRunsRoot)) {
             throw new IllegalArgumentException("Invalid run id: " + runId);
         }
         return runDirectory;
+    }
+
+    private String validateRunId(String runId) {
+        if (runId == null || runId.isBlank()) {
+            throw new IllegalArgumentException("Invalid run id: " + runId);
+        }
+
+        if (runId.contains("/") || runId.contains("\\") || runId.contains("..")) {
+            throw new IllegalArgumentException("Invalid run id: " + runId);
+        }
+
+        return runId;
     }
 
     private void printUsage() {

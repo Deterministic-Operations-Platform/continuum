@@ -90,7 +90,7 @@ Notes:
 |---|---|---|
 | `ModuleNotFoundError: No module named 'rich'` | Python deps not installed in active environment | Activate the intended venv and run `python -m pip install -r requirements.txt` and `python -m pip install -e .`. |
 | `No plugin registered for 'transport-postman'` or `verify-mongo` | Required FedNow plugins are not registered in `PluginRegistry` | Register/inject those plugins before running FedNow scenarios, or run a smoke scenario using `default` plugin only. |
-| `ScenarioValidationError` (missing fields or invalid steps) | Scenario schema does not match runtime parser | Validate YAML shape (`name`, `rail`, non-empty `steps`) and step format (`plugin/action` or short action mapping). |
+| `ScenarioValidationError` (missing fields or invalid steps) | Scenario schema does not match runtime parser | Validate YAML shape (`name`, `rail`, non-empty `steps`) and step format (`plugin/action` or short action mapping). The Java FEDNOW parser now also accepts UTF-8 BOM-prefixed files and `- action:` style short blocks with indented fields. |
 | Run writes no artifacts or errors creating `runs/...` | Path/permissions issue on `runs` directory | Verify write access to repo workspace and rerun with a new run id. |
 | `summary.json` shows `status: "STARTED"` only | Java scaffold CLI path writes static starter summary | Use as scaffold evidence output; for execution status details use the Python runtime path and its `summary.json` payload. |
 
