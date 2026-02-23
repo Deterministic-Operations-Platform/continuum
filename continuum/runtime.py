@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import os
 import shutil
 import signal
+from threading import Lock
 from time import sleep
 from typing import Any, Protocol
 import uuid
@@ -43,24 +45,20 @@ def build_plan(
     steps: list[dict[str, Any]] = []
     for index, step in enumerate(scenario.steps):
         rendered = render_templates(step.with_, ctx=ctx)
-        retry = step.retry or {
-            "on": ["exception"],
-            "maxAttempts": 1,
-            "backoff": "fixed",
-            "baseDelayMs": 0,
-            "maxDelayMs": 0,
-            "jitter": 0.0,
-        }
+        retry = _normalized_retry(step, rendered)
         step_dir = run_dir / "evidence" / f"{index + 1:02d}-{step.name}"
         attempts = [str(step_dir / f"attempt-{attempt:02d}") for attempt in range(1, int(retry["maxAttempts"]) + 1)]
         attach_files = resolve_attach_files(rendered, str(run_dir)) if step.type == "jira.attach" else []
+        depends_on = list(step.depends_on) if step.depends_on is not None else ([_step_key(scenario.steps[index - 1], index - 1)] if index > 0 else [])
         steps.append(
             {
                 "index": index,
-                "key": step.key or f"{index + 1:02d}",
+                "key": _step_key(step, index),
                 "name": step.name,
                 "type": step.type,
                 "always": step.always,
+                "dependsOn": depends_on,
+                "resources": list(step.resources),
                 "with": rendered,
                 "retry": retry,
                 "attach_files": attach_files,
@@ -124,7 +122,7 @@ class DeterministicRuntime:
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
             "run_dir": str(run_dir),
-            "vars": vars_payload,
+            "vars": _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars)),
             "env": dict(os.environ),
             "step_dir": lambda i, n: str(self.evidence_collector.step_dir(run_dir, i, n)),
             "write_json": lambda step_path, filename, payload: self.evidence_collector.write_json(Path(step_path) / filename, payload),
@@ -138,9 +136,17 @@ class DeterministicRuntime:
             reuse_sessions=reuse_sessions,
         )
 
-        summary_steps: list[dict[str, Any]] = []
-        cleanup_steps: list[dict[str, Any]] = []
-        failure: dict[str, str] | None = None
+        selection = self._selection_map(
+            scenario.steps,
+            from_selector=from_selector,
+            to_selector=to_selector,
+            only_selectors=tuple(only_selectors),
+            skip_selectors=tuple(skip_selectors),
+            prev_status_by_key=prev_status_by_key,
+            rerun_selectors=tuple(rerun_selectors),
+            from_failure=from_failure,
+            previous_summary=previous_summary,
+        )
 
         first_failed_index = self._first_failed_index(previous_summary) if from_failure else None
 
@@ -411,14 +417,12 @@ class DeterministicRuntime:
     def _run_one(self, *, step: Any, step_index: int, context: dict[str, Any], phase: str = "execution") -> dict[str, Any]:
         plugin = self.plugin_registry.resolve(step.type)
         rendered = render_templates(step.with_, ctx=context)
-        retry = step.retry
-        if retry is None and ("retries" in rendered or "backoffMs" in rendered):
-            retry = {"maxAttempts": int(rendered.get("retries", 0)) + 1, "baseDelayMs": int(rendered.get("backoffMs", 0))}
-        retry = retry or {"maxAttempts": 1, "baseDelayMs": 0}
+        retry = _normalized_retry(step, rendered)
         step_input = {k: v for k, v in rendered.items() if k not in {"retries", "backoffMs"}}
 
         attempts: list[dict[str, Any]] = []
         last_error: dict[str, str] | None = None
+        started_at = datetime.now(timezone.utc).isoformat()
         for attempt in range(1, int(retry.get("maxAttempts", 1)) + 1):
             try:
                 result = plugin.run(step_name=step.name, step_with=step_input, ctx=context, step_index=step_index)
@@ -426,7 +430,7 @@ class DeterministicRuntime:
                 summary = {
                     "index": step_index,
                     "name": step.name,
-                    "key": step.key,
+                    "key": _step_key(step, step_index),
                     "type": step.type,
                     "phase": phase,
                     "status": "succeeded" if result.ok else "failed",
@@ -436,6 +440,8 @@ class DeterministicRuntime:
                     "attempts": attempts,
                     "exports": result.exports or {},
                     "publish": self._resolve_publish(step.publish or {}, result.details),
+                    "startedAt": started_at,
+                    "endedAt": datetime.now(timezone.utc).isoformat(),
                 }
                 if result.ok:
                     return summary
@@ -453,7 +459,7 @@ class DeterministicRuntime:
         return {
             "index": step_index,
             "name": step.name,
-            "key": step.key,
+            "key": _step_key(step, step_index),
             "type": step.type,
             "phase": phase,
             "status": "failed",
@@ -463,6 +469,8 @@ class DeterministicRuntime:
             "error": (last_error or {}).get("message", "step failed"),
             "publish": {},
             "exports": {},
+            "startedAt": started_at,
+            "endedAt": datetime.now(timezone.utc).isoformat(),
         }
 
     def _resolve_publish(self, publish_map: dict[str, str], details: dict[str, Any]) -> dict[str, Any]:
@@ -499,12 +507,16 @@ def validate_scenario(scenario: Scenario, *, plugin_registry: PluginRegistry, en
     warnings: list[str] = []
     ctx = {"run_id": "validate", "run_dir": "runs/validate", "env": env_map, "vars": dict(scenario.vars)}
 
+    keys = {_step_key(step, i) for i, step in enumerate(scenario.steps)}
     for index, step in enumerate(scenario.steps):
         unknown = find_unknown_templates(step.with_, ctx=ctx)
         if unknown:
             errors.append(f"step {index} ({step.name}): unknown template keys: {', '.join(unknown)}")
         if step.legacy_retry_used:
             warnings.append(f"step {index} ({step.name}): uses legacy with.retries/backoffMs; normalized to step.retry")
+        for dep in (step.depends_on or ()):
+            if dep not in keys:
+                errors.append(f"step {index} ({step.name}): unknown dependsOn key '{dep}'")
 
         if step.type == "postman.run" and not shutil.which("newman"):
             errors.append(f"step {index} ({step.name}): missing dependency 'newman'")
