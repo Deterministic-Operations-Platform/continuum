@@ -54,9 +54,11 @@ steps:
   - name: Attach evidence to Jira
     type: jira.attach
     with:
-      files:
-        - ${vars.newmanHtml}
-        - ${vars.steps.run_postman.newmanJson}
+      globs:
+        - ${runDir}/evidence/**/newman-report.html
+        - ${runDir}/evidence/**/assertions.json
+      includeRunBundle: true
+      maxFiles: 10
 
   - name: Stop AppLauncher
     type: applauncher.stop
