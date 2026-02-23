@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import os
@@ -118,6 +119,8 @@ class DeterministicRuntime:
 
         vars_payload = _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars))
         vars_payload = _deep_merge(vars_payload, dict(cli_vars or {}))
+        trace_id = self._resolve_trace_id(scenario_text=scenario_text, run_id=resolved_run_id, vars_payload=vars_payload)
+        vars_payload["traceId"] = trace_id
 
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
@@ -127,6 +130,7 @@ class DeterministicRuntime:
             "step_dir": lambda i, n: str(self.evidence_collector.step_dir(run_dir, i, n)),
             "write_json": lambda step_path, filename, payload: self.evidence_collector.write_json(Path(step_path) / filename, payload),
         }
+        self.evidence_collector.write_json(run_dir / "trace.json", {"runId": resolved_run_id, "traceId": trace_id})
 
         service_states = self._ensure_services(
             scenario=scenario,
@@ -190,6 +194,7 @@ class DeterministicRuntime:
 
         summary = {
             "run_id": resolved_run_id,
+            "traceId": trace_id,
             "resumedFrom": effective_resume_id,
             "scenario": {"name": scenario.name, "rail": scenario.rail, "steps": len(scenario.steps)},
             "status": "failed" if failure else "succeeded",
@@ -210,6 +215,13 @@ class DeterministicRuntime:
             manifest_payload={},
         )
         return summary
+
+    def _resolve_trace_id(self, *, scenario_text: str, run_id: str, vars_payload: dict[str, Any]) -> str:
+        explicit = vars_payload.get("traceId")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()
+        digest = hashlib.sha1(scenario_text.encode("utf-8")).hexdigest()[:8]
+        return f"{run_id}-{digest}"
 
     def _load_resume_bundle(self, resume_run_id: str | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         if not resume_run_id:
@@ -366,6 +378,10 @@ class DeterministicRuntime:
                     cfg,
                     session_registry=registry,
                     allow_reuse=reuse_sessions,
+                    extra_env={
+                        "CONTINUUM_TRACE_ID": str(context.get("vars", {}).get("traceId") or ""),
+                        "CONTINUUM_RUN_ID": str(context.get("run_id") or ""),
+                    },
                 )
             else:
                 raise StepExecutionError(f"unsupported service type '{service_type}' for service '{service_name}'")
@@ -381,6 +397,7 @@ class DeterministicRuntime:
                 services_ns[service_name] = service_states[service_name]
 
             self.evidence_collector.write_json(evidence_root / "verify.json", verify_evidence)
+            self.evidence_collector.write_json(evidence_root / "service_env.json", verify_evidence.get("env", {}))
 
         self.evidence_collector.write_json(run_dir / "services.json", service_states)
         self._write_session_registry(registry)
