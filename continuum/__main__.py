@@ -22,6 +22,13 @@ def main() -> None:
     run.add_argument("--only", dest="only_selectors", action="append", default=[], help="Selector to include")
     run.add_argument("--skip", dest="skip_selectors", action="append", default=[], help="Selector to skip")
     run.add_argument("--no-cleanup", dest="no_cleanup", action="store_true", help="Do not run cleanup_steps")
+    run.add_argument("--resume", dest="resume_run_id", default=None, help="Resume from a previous run id")
+    run.add_argument("--rerun", dest="rerun_selectors", action="append", default=[], help="Step selector to force rerun")
+    run.add_argument("--from-failure", dest="from_failure", action="store_true", help="Start execution from first failed step in resumed run")
+    run.add_argument("--no-services", dest="no_services", action="store_true", help="Skip automatic scenario-level services orchestration")
+    run.add_argument("--stop-services", dest="stop_services", action="store_true", help="Stop scenario services at end of run")
+    run.add_argument("--reuse-sessions", dest="reuse_sessions", action="store_true", default=True, help="Allow service session reuse (default)")
+    run.add_argument("--no-reuse-sessions", dest="reuse_sessions", action="store_false", help="Disable service session reuse")
 
     validate = sub.add_parser("validate", help="Validate scenario without executing")
     validate.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -50,6 +57,13 @@ def main() -> None:
                 stop_services=args.stop_services,
                 reuse_sessions=args.reuse_sessions,
                 resume_run_id=args.resume_run_id,
+                from_selector=args.from_selector,
+                to_selector=args.to_selector,
+                only_selectors=tuple(args.only_selectors),
+                skip_selectors=tuple(args.skip_selectors),
+                no_cleanup=args.no_cleanup,
+                rerun_selectors=tuple(args.rerun_selectors),
+                from_failure=args.from_failure,
             )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             print(f"Run [bold]{summary['run_id']}[/bold] finished with [{status_style}]{summary['status']}[/{status_style}]")
