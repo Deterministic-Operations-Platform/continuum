@@ -65,6 +65,7 @@ class DeterministicRuntime:
         summary_steps: list[dict[str, Any]] = []
         cleanup_steps: list[dict[str, Any]] = []
         failure: dict[str, str] | None = None
+        failed_at: int | None = None
 
         for index, step in enumerate(scenario.steps):
             step_started = datetime.now(timezone.utc)
