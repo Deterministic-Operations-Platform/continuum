@@ -523,6 +523,192 @@ class JiraAttachPlugin:
         return StepResult(ok=bool(files), details={"files": files}, evidence_paths=[path])
 
 
+def _read_tail_lines(path: str, *, max_bytes: int, max_lines: int) -> list[str]:
+    file_path = Path(path)
+    if not file_path.is_file():
+        return []
+    data = file_path.read_bytes()
+    chunk = data[-max(1, int(max_bytes)) :]
+    text = chunk.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    return lines[-max(1, int(max_lines)) :]
+
+
+def _redact_text(text: str) -> str:
+    redacted = text
+    patterns = [
+        (r"(?i)(token\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
+        (r"(?i)(password\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
+        (r"(?i)(cookie\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
+        (r"(?i)(authorization\s*:\s*bearer\s+)([^\s,;]+)", r"\1[REDACTED]"),
+    ]
+    for pattern, repl in patterns:
+        redacted = re.sub(pattern, repl, redacted)
+    return redacted
+
+
+def _normalize_signature(line: str) -> str:
+    sig = line.strip()
+    sig = re.sub(r"\b[0-9a-f]{8}-[0-9a-f\-]{27,}\b", "<id>", sig, flags=re.IGNORECASE)
+    sig = re.sub(r"\b\d+\b", "<n>", sig)
+    sig = re.sub(r"\s+", " ", sig)
+    return sig[:220]
+
+
+class LogsCollectPlugin:
+    type = "logs.collect"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = Path(ctx["step_dir"](step_index, step_name))
+        step_dir.mkdir(parents=True, exist_ok=True)
+        max_lines = max(1, int(step_with.get("maxLines", 2000)))
+        max_files = max(1, int(step_with.get("maxFiles", 25)))
+        max_bytes = max(1, int(step_with.get("maxBytes", 200_000)))
+        raw_max_lines = max(1, int(step_with.get("rawMaxLines", 250)))
+
+        trace_id = str(step_with.get("traceId") or ctx.get("vars", {}).get("traceId") or "").strip()
+        run_id = str(step_with.get("runId") or ctx.get("run_id") or "").strip()
+
+        match_cfg = step_with.get("match") if isinstance(step_with.get("match"), dict) else {}
+        include_terms = [str(v).strip() for v in (match_cfg.get("include") or []) if str(v).strip()]
+        exclude_terms = [str(v).strip().lower() for v in (match_cfg.get("exclude") or []) if str(v).strip()]
+        correlation_terms = [v for v in [trace_id, run_id] if v]
+        for term in correlation_terms:
+            if term not in include_terms:
+                include_terms.insert(0, term)
+
+        resolved_sources: list[dict[str, Any]] = []
+        source_defs = step_with.get("sources") if isinstance(step_with.get("sources"), list) else []
+        for source in source_defs:
+            if not isinstance(source, dict):
+                continue
+            source_type = str(source.get("type") or "")
+            source_name = str(source.get("name") or source_type or "source")
+            if source_type == "file":
+                path = str(source.get("path") or "")
+                if path:
+                    resolved_sources.append({"name": source_name, "type": source_type, "path": path})
+            elif source_type == "dir_glob":
+                pattern = str(source.get("glob") or "")
+                for matched in sorted(glob.glob(pattern)):
+                    resolved_sources.append({"name": source_name, "type": source_type, "path": matched})
+            elif source_type == "cmd":
+                command = str(source.get("command") or "")
+                args = [str(v) for v in source.get("args", [])]
+                if command:
+                    resolved_sources.append({"name": source_name, "type": source_type, "command": command, "args": args})
+
+        resolved_sources = resolved_sources[:max_files]
+        sources_path = str(step_dir / "sources.json")
+        Path(sources_path).write_text(json.dumps({"sources": resolved_sources}, indent=2, sort_keys=True), encoding="utf-8")
+
+        snippets: list[dict[str, Any]] = []
+        seen_blocks: set[str] = set()
+        error_signatures: dict[str, int] = {}
+        raw_paths: list[str] = []
+        timestamp_re = re.compile(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
+
+        for src in resolved_sources:
+            lines: list[str]
+            src_id = src.get("path") or f"{src.get('command')} {' '.join(src.get('args', []))}".strip()
+            if src["type"] == "cmd":
+                proc = subprocess.run(
+                    [str(src.get("command")), *[str(v) for v in src.get("args", [])]],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=int(step_with.get("cmdTimeoutSec", 30)),
+                )
+                text = (proc.stdout or "")[-max_bytes:]
+                lines = text.splitlines()[-max_lines:]
+            else:
+                lines = _read_tail_lines(str(src.get("path", "")), max_bytes=max_bytes, max_lines=max_lines)
+
+            if not lines:
+                continue
+
+            raw_name = _slug(str(src.get("name", "source"))) or "source"
+            raw_file = step_dir / "raw" / f"{raw_name}.tail.log"
+            raw_file.parent.mkdir(parents=True, exist_ok=True)
+            raw_file.write_text("\n".join(_redact_text(v) for v in lines[-raw_max_lines:]), encoding="utf-8")
+            raw_paths.append(str(raw_file))
+
+            lower_lines = [ln.lower() for ln in lines]
+            for idx, line in enumerate(lines):
+                lower = lower_lines[idx]
+                if exclude_terms and any(term in lower for term in exclude_terms):
+                    continue
+                if include_terms and not any(term.lower() in lower for term in include_terms):
+                    continue
+
+                start = max(0, idx - 2)
+                end = min(len(lines), idx + 3)
+                if any(key in lower for key in ["exception", "stacktrace", "error"]):
+                    cursor = idx + 1
+                    while cursor < len(lines):
+                        candidate = lines[cursor]
+                        if not candidate.strip():
+                            cursor += 1
+                            break
+                        if timestamp_re.match(candidate):
+                            break
+                        cursor += 1
+                    end = max(end, cursor)
+
+                block_lines = [_redact_text(v) for v in lines[start:end]]
+                block_text = "\n".join(block_lines).strip()
+                if not block_text or block_text in seen_blocks:
+                    continue
+                seen_blocks.add(block_text)
+                snippets.append(
+                    {
+                        "source": str(src_id),
+                        "sourceName": src.get("name"),
+                        "startLine": start + 1,
+                        "endLine": end,
+                        "matchLine": idx + 1,
+                        "text": block_text,
+                    }
+                )
+                if any(key in lower for key in ["error", "exception"]):
+                    signature = _normalize_signature(line)
+                    error_signatures[signature] = error_signatures.get(signature, 0) + 1
+
+        snippets = sorted(snippets, key=lambda s: (str(s.get("sourceName")), str(s.get("source")), int(s.get("startLine", 0))))
+        if len(snippets) > max_lines:
+            snippets = snippets[:max_lines]
+
+        top_errors = [
+            {"signature": signature, "count": count}
+            for signature, count in sorted(error_signatures.items(), key=lambda kv: (-kv[1], kv[0]))[: int(step_with.get("topN", 10))]
+        ]
+
+        snippets_payload = {"found": len(snippets), "traceId": trace_id or None, "snippets": snippets}
+        snippets_json = str(step_dir / "snippets.json")
+        Path(snippets_json).write_text(json.dumps(snippets_payload, indent=2, sort_keys=True), encoding="utf-8")
+        snippets_txt_text = "\n\n".join(
+            f"[{item['sourceName']}:{item['matchLine']}]\n{item['text']}" for item in snippets
+        ) if snippets else "No matches found."
+        snippets_txt_path = str(step_dir / "snippets.txt")
+        Path(snippets_txt_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(snippets_txt_path).write_text(snippets_txt_text, encoding="utf-8")
+        top_errors_path = str(step_dir / "top_errors.json")
+        Path(top_errors_path).write_text(json.dumps({"topErrors": top_errors}, indent=2, sort_keys=True), encoding="utf-8")
+
+        evidence_paths = [sources_path, snippets_json, snippets_txt_path, top_errors_path, *raw_paths]
+        details = {
+            "found": len(snippets),
+            "sources": len(resolved_sources),
+            "traceId": trace_id or None,
+            "topErrors": top_errors,
+        }
+        exports = {
+            "logSnippetsTxt": snippets_txt_path,
+            "logErrorCount": sum(item["count"] for item in top_errors),
+        }
+        return StepResult(ok=True, details=details, evidence_paths=evidence_paths, exports=exports)
+
+
 class LegacyPlugin:
     def __init__(self, type_name: str): self.type = type_name
 
@@ -544,6 +730,7 @@ class PluginRegistry:
             JiraFetchPlugin(),
             JiraCommentPlugin(),
             JiraAttachPlugin(),
+            LogsCollectPlugin(),
         ]
         self._plugins = {p.type: p for p in initial_plugins}
 
