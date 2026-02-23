@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 import hashlib
 import json
 import platform
-from pathlib import Path
 import subprocess
-from typing import Any
 
 
 class EvidenceCollector:
@@ -55,9 +55,13 @@ class EvidenceCollector:
             "newman": self._command_version(["newman", "--version"]),
         }
 
-        artifacts = [self._artifact_metadata(path) for path in sorted(run_dir.rglob("*")) if path.is_file() and path.name != "manifest.json"]
+        artifacts = [
+            self._artifact_metadata(path)
+            for path in sorted(run_dir.rglob("*"))
+            if path.is_file() and path.name != "manifest.json"
+        ]
 
-        manifest_payload = {
+        manifest_data: dict[str, Any] = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": run_id,
             "scenario_source": str(scenario_source),
@@ -66,10 +70,8 @@ class EvidenceCollector:
         }
         if manifest_payload:
             manifest_data.update(manifest_payload)
-        (run_dir / "manifest.json").write_text(
-            json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8"
-        )
 
+        (run_dir / "manifest.json").write_text(json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8")
         return run_dir
 
     def _artifact_metadata(self, path: Path) -> dict[str, Any]:

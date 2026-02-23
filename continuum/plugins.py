@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -58,8 +59,6 @@ def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
                 return str(ctx["env"].get(env_key, ""))
             if key.startswith("vars."):
                 return str(lookup(key))
-                var_key = key[5:]
-                return str(ctx["vars"].get(var_key, ""))
             return str(ctx["vars"].get(key, ""))
 
         return pattern.sub(repl, value)
@@ -256,8 +255,8 @@ class PostmanRunPlugin:
     type = "postman.run"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        step_dir = ctx["step_dir"](step_index, step_name)
         if shutil.which("newman") is None:
-            step_dir = ctx["step_dir"](step_index, step_name)
             dependency_path = ctx["write_json"](
                 step_dir,
                 "missing-dependency.json",

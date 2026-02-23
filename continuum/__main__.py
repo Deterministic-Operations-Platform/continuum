@@ -20,6 +20,10 @@ def main() -> None:
     run = sub.add_parser("run", help="Run a scenario from a YAML/JSON file")
     run.add_argument("scenario", help="Path to scenario YAML/JSON")
     run.add_argument("--run-id", dest="run_id", default=None, help="Optional run id for deterministic replay")
+    run.add_argument("--resume", dest="resume_id", default=None, help="Resume from an existing run id")
+    run.add_argument("--rerun", action="append", default=[], help="Step selector to force re-execution")
+    run.add_argument("--from-failure", action="store_true", help="Resume from first failed step in previous run")
+    run.add_argument("--no-cleanup", action="store_true", help="Skip cleanup steps")
 
     args = parser.parse_args()
     if args.cmd == "status":
@@ -37,6 +41,10 @@ def main() -> None:
                 scenario_source=scenario_path,
                 scenario_text=scenario_text,
                 run_id=args.run_id,
+                resume_id=args.resume_id,
+                rerun_selectors=args.rerun,
+                from_failure=args.from_failure,
+                no_cleanup=args.no_cleanup,
             )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             print(f"Run [bold]{summary['run_id']}[/bold] finished with [{status_style}]{summary['status']}[/{status_style}]")
