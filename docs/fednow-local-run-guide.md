@@ -11,6 +11,7 @@ This guide is for local FEDNOW CAM29 scenario runs using:
 - Why it failed before: on Windows, any locked leftover file in a reused run directory caused initialization to fail before `scenario.yaml`, `summary.json`, `events.log`, and `manifest.json` were written.
 - Current behavior: run directory is reused as-is, and managed artifacts are overwritten deterministically.
 - YAML scenario parsing now tolerates inline comments in scalar values (for example, `rail: fednow # payment rail`) while preserving deterministic parsing behavior.
+- YAML parsing also accepts UTF-8 BOM-prefixed scenario files and short-action list blocks like `- send:` with indented fields.
 - Artifact writes now fail fast for blank names and enforce absolute normalized path checks to keep writes under `runs/<run-id>/`.
 
 ## Quick Start (FEDNOW Local)

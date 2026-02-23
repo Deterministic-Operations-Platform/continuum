@@ -19,12 +19,18 @@ public class SimpleYamlParser {
         String currentContainerKey = null;
         Map<String, Object> currentMapping = null;
         Map<String, Object> currentItem = null;
+        Map<String, Object> currentNestedMapping = null;
+        String currentNestedMappingKey = null;
 
         String[] lines = yamlContent.split("\\r?\\n");
         for (int i = 0; i < lines.length; i++) {
             String rawLine = lines[i];
             if (rawLine == null) {
                 continue;
+            }
+
+            if (i == 0 && rawLine.startsWith("\uFEFF")) {
+                rawLine = rawLine.substring(1);
             }
 
             String trimmed = rawLine.trim();
@@ -37,6 +43,8 @@ public class SimpleYamlParser {
                 currentList = null;
                 currentMapping = null;
                 currentItem = null;
+                currentNestedMapping = null;
+                currentNestedMappingKey = null;
                 continue;
             }
 
@@ -50,15 +58,36 @@ public class SimpleYamlParser {
                 }
                 currentItem = new LinkedHashMap<>();
                 currentList.add(currentItem);
+                currentNestedMapping = null;
+                currentNestedMappingKey = null;
                 String itemBody = trimmed.substring(2).trim();
                 if (!itemBody.isEmpty()) {
-                    parseKeyValueInto(itemBody, currentItem, i + 1);
+                    if (itemBody.endsWith(":")) {
+                        currentNestedMappingKey = itemBody.substring(0, itemBody.length() - 1).trim();
+                        if (currentNestedMappingKey.isEmpty()) {
+                            throw new ScenarioValidationError("Invalid key/value at line " + (i + 1));
+                        }
+                        currentNestedMapping = new LinkedHashMap<>();
+                        currentItem.put(currentNestedMappingKey, currentNestedMapping);
+                    } else {
+                        parseKeyValueInto(itemBody, currentItem, i + 1);
+                    }
                 }
                 continue;
             }
 
             if (rawLine.startsWith(" ") && currentItem != null) {
-                parseKeyValueInto(trimmed, currentItem, i + 1);
+                if (currentNestedMapping != null) {
+                    if (trimmed.startsWith(currentNestedMappingKey + ":")) {
+                        parseKeyValueInto(trimmed, currentItem, i + 1);
+                        currentNestedMapping = null;
+                        currentNestedMappingKey = null;
+                    } else {
+                        parseKeyValueInto(trimmed, currentNestedMapping, i + 1);
+                    }
+                } else {
+                    parseKeyValueInto(trimmed, currentItem, i + 1);
+                }
                 continue;
             }
 
@@ -80,6 +109,8 @@ public class SimpleYamlParser {
                 currentContainerKey = null;
                 currentMapping = null;
                 currentItem = null;
+                currentNestedMapping = null;
+                currentNestedMappingKey = null;
                 continue;
             }
 

@@ -28,9 +28,8 @@ public class FileEvidenceCollector implements EvidenceCollector {
             throw new IOException("Artifact name must not be empty");
         }
 
-        Path target = runDirectory.resolve(name).normalize();
         Path normalizedRunDirectory = runDirectory.normalize().toAbsolutePath();
-        Path absoluteTarget = target.toAbsolutePath();
+        Path absoluteTarget = normalizedRunDirectory.resolve(name).normalize();
         if (!absoluteTarget.startsWith(normalizedRunDirectory)) {
             throw new IOException("Artifact path escapes run directory: " + name);
         }

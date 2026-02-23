@@ -25,6 +25,7 @@ If a plugin is missing, execution fails deterministically and still writes evide
 
 ## FEDNOW-only hardening updates
 - `SimpleYamlParser` now ignores inline YAML comments in scalar values, including FEDNOW scenario metadata lines like `rail: fednow # payment rail`.
+- `SimpleYamlParser` now also handles UTF-8 BOM-prefixed files and list items that use short action blocks (`- send:` followed by indented fields).
 - `FileEvidenceCollector` now rejects blank artifact names and uses absolute, normalized path checks before writing evidence files.
 - Scope intentionally excludes Java CLI command behavior (`ContinuumCli.java`) unless required for correctness.
 - Reference guide: `docs/fednow-local-run-guide.md`
