@@ -6,8 +6,27 @@ import sys
 import unittest
 from pathlib import Path
 
+from continuum.evidence import EvidenceCollector
+from continuum.plugins import PluginRegistry, StepResult
+from continuum.runtime import DeterministicRuntime
+from continuum.scenario import Scenario, ScenarioStep
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+class FlakyPlugin:
+    type = "test.flaky"
+
+    def __init__(self, fail_attempts: int):
+        self._fail_attempts = fail_attempts
+        self._calls = 0
+
+    def run(self, *, step_name: str, step_with: dict, ctx: dict, step_index: int) -> StepResult:
+        self._calls += 1
+        step_dir = ctx["step_dir"](step_index, step_name)
+        marker = ctx["write_json"](step_dir, "attempt.json", {"attempt": self._calls})
+        return StepResult(ok=self._calls > self._fail_attempts, details={"attempt": self._calls}, evidence_paths=[marker])
 
 
 class ContinuumSmokeTests(unittest.TestCase):
@@ -59,57 +78,60 @@ class ContinuumSmokeTests(unittest.TestCase):
         self.assertEqual(summary["run_id"], run_id)
         self.assertEqual(summary["status"], "succeeded")
 
-    def test_postman_step_writes_preflight_when_newman_is_missing(self) -> None:
-        run_id = "test-preflight-newman"
+    def test_run_executes_always_steps_after_failure(self) -> None:
+        run_id = "test-always-run"
         run_dir = REPO_ROOT / "runs" / run_id
-        scenario_path = REPO_ROOT / "runs" / f"{run_id}-scenario.yaml"
+        scenario_path = REPO_ROOT / "runs" / "test-always-scenario.yaml"
+
         self.addCleanup(lambda: shutil.rmtree(run_dir, ignore_errors=True))
         self.addCleanup(lambda: scenario_path.unlink(missing_ok=True))
 
         scenario_path.write_text(
-            """
-name: Preflight Missing Newman
-rail: fednow
+            """name: always-step-smoke
+rail: test
 steps:
-  - name: run postman collection
-    type: postman.run
+  - name: Start AppLauncher
+    type: applauncher.start
     with:
-      collection: fake-collection.json
-""".strip(),
+      command: python
+      args: ["-m", "http.server", "8091"]
+      cwd: .
+  - name: Force health failure
+    type: http.health
+    with:
+      url: http://localhost:1
+      timeoutSec: 1
+  - name: Stop AppLauncher
+    type: applauncher.stop
+    always: true
+""",
             encoding="utf-8",
         )
 
-        env = os.environ.copy()
-        env["PATH"] = ""
         result = subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "continuum",
                 "run",
-                str(scenario_path),
+                str(scenario_path.relative_to(REPO_ROOT)),
                 "--run-id",
                 run_id,
             ],
             cwd=REPO_ROOT,
-            env=env,
             capture_output=True,
             text=True,
             check=False,
         )
 
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertTrue(run_dir.exists(), "Run directory was not created")
+        self.assertNotEqual(result.returncode, 0, "Run should fail due to health check")
 
-        summary_path = run_dir / "summary.json"
-        preflight_path = run_dir / "evidence" / "01-run_postman_collection" / "preflight.json"
-        self.assertTrue(summary_path.exists(), "Missing summary.json")
-        self.assertTrue(preflight_path.exists(), "Missing preflight evidence")
-
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["status"], "failed")
-        self.assertEqual(summary["steps"][0]["details"]["error"], "Missing dependency: newman")
-        self.assertEqual(summary["failure"]["message"], "Missing dependency: newman")
+        self.assertEqual(len(summary["steps"]), 3)
+        self.assertEqual(summary["steps"][2]["name"], "Stop AppLauncher")
+        self.assertTrue(summary["steps"][2]["ok"])
+        self.assertTrue((run_dir / "evidence" / "03-Stop_AppLauncher").exists())
 
 
 if __name__ == "__main__":

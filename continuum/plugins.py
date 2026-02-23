@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Any
 import base64
+import glob
 import json
 import os
 import re
@@ -45,6 +46,9 @@ def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
             if key.startswith("env."):
                 env_key = key[4:]
                 return str(ctx["env"].get(env_key, ""))
+            if key.startswith("vars."):
+                var_key = key[5:]
+                return str(ctx["vars"].get(var_key, ""))
             return str(ctx["vars"].get(key, ""))
 
         return pattern.sub(repl, value)
@@ -73,21 +77,30 @@ class AppLauncherStartPlugin:
         env = os.environ.copy()
         env.update({k: str(v) for k, v in step_with.get("env", {}).items()})
 
-        process = subprocess.Popen(
-            [command, *[str(item) for item in args]],
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        step_dir = Path(ctx["step_dir"](step_index, step_name))
+        step_dir.mkdir(parents=True, exist_ok=True)
+        stdout_path = step_dir / "stdout.log"
+        stderr_path = step_dir / "stderr.log"
+        stdout_handle = stdout_path.open("a", encoding="utf-8")
+        stderr_handle = stderr_path.open("a", encoding="utf-8")
+        try:
+            process = subprocess.Popen(
+                [command, *[str(item) for item in args]],
+                cwd=cwd,
+                env=env,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                text=True,
+            )
+        finally:
+            stdout_handle.close()
+            stderr_handle.close()
 
         ctx["vars"]["__applauncherPid"] = process.pid
         ctx["vars"]["__applauncherCwd"] = cwd
 
-        step_dir = ctx["step_dir"](step_index, step_name)
-        out_log = ctx["write"](step_dir, "stdout.log", process.stdout.read(0) if process.stdout else "")
-        err_log = ctx["write"](step_dir, "stderr.log", process.stderr.read(0) if process.stderr else "")
+        out_log = str(stdout_path)
+        err_log = str(stderr_path)
         pid_path = ctx["write_json"](
             step_dir,
             "pid.json",
@@ -151,22 +164,20 @@ class PostmanRunPlugin:
     type = "postman.run"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        step_dir = ctx["step_dir"](step_index, step_name)
-        newman_path = which("newman")
-        if not newman_path:
-            preflight_path = ctx["write_json"](
+        if shutil.which("newman") is None:
+            step_dir = ctx["step_dir"](step_index, step_name)
+            dependency_path = ctx["write_json"](
                 step_dir,
-                "preflight.json",
+                "missing-dependency.json",
                 {
-                    "ok": False,
-                    "missing": ["newman"],
-                    "hint": "Install newman (npm i -g newman) and ensure it's on PATH.",
+                    "missing": "newman",
+                    "message": "postman.run requires newman installed and available on PATH",
                 },
             )
             return StepResult(
                 ok=False,
-                details={"error": "Missing dependency: newman"},
-                evidence_paths=[preflight_path],
+                details={"error": "postman.run requires newman installed and available on PATH"},
+                evidence_paths=[dependency_path],
             )
 
         collection = step_with.get("collection")
@@ -396,6 +407,17 @@ class JiraAttachPlugin(JiraPluginBase):
         if not files:
             raise StepExecutionError("jira.attach requires with.files")
 
+        resolved_files: list[str] = []
+        for file_path in files:
+            rendered = str(file_path)
+            if any(token in rendered for token in "*?[]"):
+                resolved_files.extend(sorted(glob.glob(rendered, recursive=True)))
+            else:
+                resolved_files.append(rendered)
+
+        if not resolved_files:
+            raise StepExecutionError("jira.attach did not resolve any files")
+
         # Cloud Jira requires multipart form-data; use curl for portability.
         base = step_with.get("baseUrl") or ctx["env"].get("JIRA_BASE_URL")
         email = step_with.get("email") or ctx["env"].get("JIRA_EMAIL")
@@ -412,7 +434,7 @@ class JiraAttachPlugin(JiraPluginBase):
             "X-Atlassian-Token: no-check",
             f"{str(base).rstrip('/')}/rest/api/3/issue/{issue_key}/attachments",
         ]
-        for file_path in files:
+        for file_path in resolved_files:
             command.extend(["-F", f"file=@{file_path}"])
 
         proc = subprocess.run(command, capture_output=True, text=True, check=False)
@@ -421,7 +443,7 @@ class JiraAttachPlugin(JiraPluginBase):
 
         payload = json.loads(proc.stdout) if proc.stdout.strip() else []
         attachments_path = ctx["write_json"](step_dir, "attachments.json", payload)
-        return StepResult(ok=True, details={"issueKey": issue_key, "files": files}, evidence_paths=[attachments_path])
+        return StepResult(ok=True, details={"issueKey": issue_key, "files": resolved_files}, evidence_paths=[attachments_path])
 
 
 class LegacyPlugin:

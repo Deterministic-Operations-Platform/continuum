@@ -75,3 +75,4 @@ steps:
 
 ## Additional guides
 - GitHub Packages starter: `docs/github-packages-get-started.md`
+- Scenario schema and production examples: `docs/scenarios.md`
