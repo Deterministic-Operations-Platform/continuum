@@ -12,7 +12,7 @@ from time import sleep
 from typing import Any, Protocol
 import uuid
 
-from continuum.errors import ContinuumError, FailureClass, StepExecutionError
+from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError
 from continuum.evidence import EvidenceCollector
 from continuum.plugins import (
     PluginRegistry,
@@ -102,9 +102,12 @@ class DeterministicRuntime:
             if step.legacy_retry_used
         ]
 
-        resumed_vars = self._load_resumed_vars(resume_run_id)
-        vars_payload = dict(resumed_vars)
-        vars_payload.update(scenario.vars)
+        previous_summary, previous_context = self._load_resume_bundle(resume_id)
+        prev_status_by_key = self._build_previous_status_map(previous_summary)
+        prev_vars = (previous_context or {}).get("vars", {})
+
+        merged_vars = _deep_merge(dict(prev_vars if isinstance(prev_vars, dict) else {}), dict(scenario.vars))
+        merged_vars = _deep_merge(merged_vars, dict(cli_vars or {}))
 
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
@@ -155,6 +158,7 @@ class DeterministicRuntime:
 
         summary = {
             "run_id": resolved_run_id,
+            "resumedFrom": resume_id,
             "scenario": {"name": scenario.name, "rail": scenario.rail, "steps": len(scenario.steps)},
             "status": "failed" if failure else "succeeded",
             "steps": summary_steps,
@@ -296,6 +300,7 @@ class DeterministicRuntime:
                     "key": step.key,
                     "type": step.type,
                     "phase": phase,
+                    "status": "succeeded" if result.ok else "failed",
                     "ok": result.ok,
                     "details": result.details,
                     "evidence": result.evidence_paths,
@@ -322,6 +327,7 @@ class DeterministicRuntime:
             "key": step.key,
             "type": step.type,
             "phase": phase,
+            "status": "failed",
             "ok": False,
             "attempts": attempts,
             "failure": last_error,

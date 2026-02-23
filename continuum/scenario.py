@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 import json
+from pathlib import Path
 import re
+from typing import Any
 
 import yaml
 
@@ -192,4 +192,5 @@ def load_scenario(path: str | Path) -> Scenario:
         raise ScenarioValidationError("Scenario must be .json, .yaml, or .yml")
     if not isinstance(data, dict):
         raise ScenarioValidationError("Scenario document must be a mapping")
+
     return Scenario.from_mapping(data)

@@ -4,18 +4,16 @@ vars:
   issueKey: PGQT-5417
 
 steps:
-  - name: Start AppLauncher
-    type: applauncher.start
+  - name: Ensure AppLauncher session
+    id: ensure_appl
+    type: applauncher.ensure
     with:
+      session: fednow-rof
       command: python
       args: ["-m", "http.server", "8080"]
       cwd: .
-
-  - name: Wait for service health
-    type: http.health
-    with:
-      url: http://localhost:8080
-      timeoutSec: 10
+      healthUrl: http://localhost:8080
+      verifyTimeoutSec: 10
 
   - name: Run Postman ROF
     type: postman.run
@@ -60,6 +58,8 @@ steps:
       includeRunBundle: true
       maxFiles: 10
 
-  - name: Stop AppLauncher
-    type: applauncher.stop
+  - name: Stop AppLauncher session
+    type: applauncher.session.stop
     always: true
+    with:
+      session: fednow-rof
