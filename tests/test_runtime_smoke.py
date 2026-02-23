@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -190,6 +191,81 @@ steps:
         self.assertTrue(summary["steps"][2]["ok"])
         self.assertTrue((run_dir / "evidence" / "03-Stop_AppLauncher").exists())
 
+
+
+    def test_services_resume_reuse_and_restart_when_pid_missing(self) -> None:
+        first_run = "test-services-run-1"
+        second_run = "test-services-run-2"
+        third_run = "test-services-run-3"
+        session_registry = REPO_ROOT / "runs" / ".service-sessions.json"
+
+        for run_id in (first_run, second_run, third_run):
+            self.addCleanup(lambda rid=run_id: shutil.rmtree(REPO_ROOT / "runs" / rid, ignore_errors=True))
+        self.addCleanup(lambda: session_registry.unlink(missing_ok=True))
+
+        scenario = Scenario(
+            name="services-smoke",
+            rail="test",
+            vars={},
+            services={
+                "appl": {
+                    "type": "applauncher",
+                    "session": "smoke-svc",
+                    "command": sys.executable,
+                    "args": ["-m", "http.server", "8123"],
+                    "cwd": ".",
+                    "healthUrl": "http://127.0.0.1:8123",
+                    "verifyTimeoutSec": 5,
+                    "reuse": True,
+                }
+            },
+            steps=(
+                ScenarioStep(name="noop", type="jira.comment", key="01_noop", with_={}),
+            ),
+        )
+
+        runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
+
+        summary1 = runtime.execute(
+            scenario=scenario,
+            scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
+            scenario_text="name: services-smoke",
+            run_id=first_run,
+        )
+        first_state = summary1["services"]["appl"]
+        self.assertFalse(first_state["reused"])
+        first_pid = int(first_state["pid"])
+
+        summary2 = runtime.execute(
+            scenario=scenario,
+            scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
+            scenario_text="name: services-smoke",
+            run_id=second_run,
+            resume_run_id=first_run,
+        )
+        second_state = summary2["services"]["appl"]
+        self.assertTrue(second_state["reused"])
+        self.assertEqual(int(second_state["pid"]), first_pid)
+
+        os.kill(first_pid, 9)
+        time.sleep(0.2)
+
+        summary3 = runtime.execute(
+            scenario=scenario,
+            scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
+            scenario_text="name: services-smoke",
+            run_id=third_run,
+            resume_run_id=second_run,
+        )
+        third_state = summary3["services"]["appl"]
+        self.assertFalse(third_state["reused"])
+        self.assertNotEqual(int(third_state["pid"]), first_pid)
+
+        third_pid = int(third_state["pid"])
+        os.kill(third_pid, 9)
+
+        verify_path = REPO_ROOT / "runs" / second_run / "evidence" / "00-services" / "appl" / "verify.json"
+        self.assertTrue(verify_path.exists())
 
     def test_resolve_attach_files_supports_globs_step_dirs_and_bundle(self) -> None:
         run_dir = REPO_ROOT / "runs" / "test-resolve-attach-files"

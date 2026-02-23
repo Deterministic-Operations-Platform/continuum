@@ -10,8 +10,10 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
+from urllib.parse import urlparse
 import urllib.error
 import urllib.request
 
@@ -163,6 +165,117 @@ class AppLauncherStartPlugin:
         return StepResult(ok=True, details={"pid": proc.pid}, evidence_paths=[path], exports={"applauncherPid": proc.pid})
 
 
+def _is_pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _check_health(url: str, timeout_sec: int) -> tuple[bool, int | None, str | None]:
+    deadline = time.time() + max(1, timeout_sec)
+    last_error: str | None = None
+    status: int | None = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                status = response.status
+                if 200 <= status < 300:
+                    return True, status, None
+                last_error = f"HTTP {status}"
+        except Exception as err:
+            last_error = str(err)
+        time.sleep(0.25)
+    return False, status, last_error or "timeout"
+
+
+def _base_url_from_health_url(health_url: str | None) -> str | None:
+    if not health_url:
+        return None
+    parsed = urlparse(health_url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def ensure_applauncher_session(
+    cfg: dict[str, Any],
+    *,
+    session_registry: dict[str, Any],
+    allow_reuse: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    command = cfg.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise StepExecutionError("applauncher service requires command")
+
+    args = [str(v) for v in cfg.get("args", [])]
+    cwd = str(cfg.get("cwd", "."))
+    verify_timeout_sec = int(cfg.get("verifyTimeoutSec", 10))
+    health_url = cfg.get("healthUrl")
+    session_name = str(cfg.get("session") or "")
+    can_reuse = allow_reuse and bool(cfg.get("reuse", True)) and bool(session_name)
+
+    reused = False
+    pid: int | None = None
+    health_ok = False
+    verify_error: str | None = None
+    status_code: int | None = None
+    existing = session_registry.get(session_name) if can_reuse else None
+    existing_pid = int(existing.get("pid", 0)) if isinstance(existing, dict) and existing.get("pid") else None
+
+    if can_reuse and existing_pid and _is_pid_alive(existing_pid):
+        pid = existing_pid
+        if isinstance(health_url, str) and health_url.strip():
+            health_ok, status_code, verify_error = _check_health(health_url, verify_timeout_sec)
+        else:
+            health_ok = True
+        if health_ok:
+            reused = True
+
+    if not reused:
+        proc = subprocess.Popen([command, *args], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        pid = int(proc.pid)
+        if isinstance(health_url, str) and health_url.strip():
+            health_ok, status_code, verify_error = _check_health(health_url, verify_timeout_sec)
+        else:
+            health_ok = True
+            status_code = None
+            verify_error = None
+
+    if session_name:
+        session_registry[session_name] = {
+            "pid": pid,
+            "healthUrl": health_url,
+            "cwd": cwd,
+            "command": command,
+            "args": args,
+            "updatedAt": int(time.time()),
+        }
+
+    exports = {
+        "pid": pid,
+        "healthOk": health_ok,
+        "baseUrl": _base_url_from_health_url(health_url if isinstance(health_url, str) else None),
+        "reused": reused,
+    }
+    evidence = {
+        "session": session_name or None,
+        "reused": reused,
+        "pid": pid,
+        "healthUrl": health_url,
+        "healthOk": health_ok,
+        "status": status_code,
+        "error": verify_error,
+        "command": command,
+        "args": args,
+        "cwd": cwd,
+    }
+    return exports, evidence
+
+
 class AppLauncherStopPlugin:
     type = "applauncher.stop"
 
@@ -171,7 +284,7 @@ class AppLauncherStopPlugin:
         if not pid:
             return StepResult(ok=True, details={"pid": None, "stopped": False}, evidence_paths=[])
         try:
-            os.kill(int(pid), 15)
+            os.kill(int(pid), signal.SIGTERM)
         except ProcessLookupError:
             pass
         path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "stopped.json", {"pid": int(pid)})
