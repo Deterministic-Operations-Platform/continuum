@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 import json
+from pathlib import Path
 import re
+from typing import Any
 
 import yaml
 
@@ -18,9 +18,11 @@ class ScenarioStep:
     name: str
     type: str
     with_: dict[str, Any]
+    publish: dict[str, str] | None = None
     key: str = ""
-    publish: dict[str, str] = field(default_factory=dict)
     always: bool = False
+    retry: dict[str, Any] | None = None
+    legacy_retry_used: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +30,8 @@ class Scenario:
     name: str
     rail: str
     steps: tuple[ScenarioStep, ...]
+    vars: dict[str, Any]
     cleanup_steps: tuple[ScenarioStep, ...] = ()
-    vars: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def from_mapping(data: dict[str, Any]) -> "Scenario":
@@ -42,23 +44,19 @@ class Scenario:
         if not isinstance(raw_steps, list) or not raw_steps:
             raise ScenarioValidationError("steps must be a non-empty array")
 
-        raw_cleanup_steps = data.get("cleanup_steps", [])
-        if raw_cleanup_steps is None:
-            raw_cleanup_steps = []
-        if not isinstance(raw_cleanup_steps, list):
-            raise ScenarioValidationError("cleanup_steps must be an array when provided")
-
-        raw_vars = data.get("vars", {})
-        if raw_vars is None:
-            raw_vars = {}
+        raw_vars = data.get("vars") or {}
         if not isinstance(raw_vars, dict):
             raise ScenarioValidationError("vars must be a mapping when provided")
+
+        raw_cleanup = data.get("cleanup_steps") or []
+        if not isinstance(raw_cleanup, list):
+            raise ScenarioValidationError("cleanup_steps must be an array when provided")
 
         return Scenario(
             name=str(data["name"]),
             rail=str(data["rail"]),
             steps=tuple(_parse_steps(raw_steps, label="steps")),
-            cleanup_steps=tuple(_parse_steps(raw_cleanup_steps, label="cleanup_steps")),
+            cleanup_steps=tuple(_parse_steps(raw_cleanup, label="cleanup_steps")),
             vars=raw_vars,
         )
 
@@ -67,12 +65,46 @@ def step_key(step: dict[str, Any], index: int) -> str:
     explicit_id = step.get("id")
     if isinstance(explicit_id, str) and explicit_id.strip():
         return explicit_id.strip()
-
     raw_name = str(step.get("name") or f"step_{index + 1}")
-    slug = re.sub(r"[^a-z0-9]+", "_", raw_name.strip().lower()).strip("_")
-    if not slug:
-        slug = f"step_{index + 1}"
-    return f"{index + 1:02d}_{slug}"
+    slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", raw_name).strip("_")
+    return f"{index + 1:02d}_{slug or f'step_{index + 1}'}"
+
+
+def normalize_retry(raw_step: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    legacy_used = False
+    retry_raw = raw_step.get("retry")
+
+    step_with = raw_step.get("with") if isinstance(raw_step.get("with"), dict) else {}
+    if retry_raw is None and isinstance(step_with, dict) and ("retries" in step_with or "backoffMs" in step_with):
+        retry_raw = {
+            "maxAttempts": int(step_with.get("retries", 0)) + 1,
+            "baseDelayMs": int(step_with.get("backoffMs", 0)),
+            "maxDelayMs": int(step_with.get("backoffMs", 0)),
+            "backoff": "fixed",
+            "jitter": 0.0,
+            "on": ["exception"],
+        }
+        legacy_used = True
+
+    if retry_raw is None:
+        return None, legacy_used
+    if not isinstance(retry_raw, dict):
+        raise ScenarioValidationError("retry must be a mapping")
+
+    retry_on = retry_raw.get("on", ["exception"])
+    if isinstance(retry_on, str):
+        retry_on = [retry_on]
+    if not isinstance(retry_on, list) or not all(isinstance(i, str) for i in retry_on):
+        raise ScenarioValidationError("retry.on must be a list of strings")
+
+    return {
+        "on": retry_on,
+        "maxAttempts": max(1, int(retry_raw.get("maxAttempts", 1))),
+        "backoff": str(retry_raw.get("backoff", "fixed")),
+        "baseDelayMs": max(0, int(retry_raw.get("baseDelayMs", 0))),
+        "maxDelayMs": max(0, int(retry_raw.get("maxDelayMs", retry_raw.get("baseDelayMs", 0)))),
+        "jitter": float(retry_raw.get("jitter", 0.0)),
+    }, legacy_used
 
 
 def _parse_steps(raw_steps: list[Any], *, label: str) -> list[ScenarioStep]:
@@ -82,68 +114,51 @@ def _parse_steps(raw_steps: list[Any], *, label: str) -> list[ScenarioStep]:
             raise ScenarioValidationError(f"{label} step {index} must be a mapping")
 
         if {"name", "type"}.issubset(raw_step.keys()):
-            step_with = raw_step.get("with", {})
+            name = str(raw_step["name"])
+            step_type = str(raw_step["type"])
+            step_with = raw_step.get("with") or {}
             if not isinstance(step_with, dict):
                 raise ScenarioValidationError(f"{label} step {index} with must be a mapping")
-            publish = raw_step.get("publish", {}) or {}
+            publish = raw_step.get("publish") or {}
             if not isinstance(publish, dict) or not all(isinstance(v, str) for v in publish.values()):
                 raise ScenarioValidationError(f"{label} step {index} publish must be a mapping of string expressions")
+            retry, legacy = normalize_retry(raw_step)
             parsed_steps.append(
                 ScenarioStep(
-                    name=str(raw_step["name"]),
-                    type=str(raw_step["type"]),
+                    name=name,
+                    type=step_type,
                     key=step_key(raw_step, index),
-                    with_=step_with,
+                    with_={k: v for k, v in step_with.items() if k not in {"retries", "backoffMs"}},
                     publish=publish,
                     always=bool(raw_step.get("always", False)),
+                    retry=retry,
+                    legacy_retry_used=legacy,
                 )
             )
             continue
 
-        # Backward-compatible shorthand schema.
-        if {"plugin", "action"}.issubset(raw_step.keys()):
-            plugin = str(raw_step["plugin"])
-            action = str(raw_step["action"])
-            step_input = raw_step.get("input", {})
-            if not isinstance(step_input, dict):
-                raise ScenarioValidationError(f"{label} step {index} input must be a mapping")
-            parsed_steps.append(
-                ScenarioStep(
-                    name=f"{plugin}.{action}",
-                    type=f"legacy.{plugin}.{action}",
-                    key=step_key(raw_step, index),
-                    with_=step_input,
-                )
-            )
-            continue
-
+        # Legacy single action mapping.
         if len(raw_step) != 1:
-            raise ScenarioValidationError(
-                f"{label} step {index} must use name/type fields, plugin/action fields, or single action mapping"
-            )
-
+            raise ScenarioValidationError(f"{label} step {index} must include name/type or single action mapping")
         action, payload = next(iter(raw_step.items()))
         if not isinstance(payload, dict):
             raise ScenarioValidationError(f"{label} step {index} payload must be a mapping")
-
         plugin = str(payload.get("via", "default"))
-        step_with = {k: v for k, v in payload.items() if k != "via"}
         parsed_steps.append(
             ScenarioStep(
                 name=f"{plugin}.{action}",
                 type=f"legacy.{plugin}.{action}",
                 key=step_key(raw_step, index),
-                with_=step_with,
+                with_={k: v for k, v in payload.items() if k != "via"},
+                publish={},
             )
         )
-
     return parsed_steps
 
 
 def load_scenario(path: str | Path) -> Scenario:
     scenario_path = Path(path)
     text = scenario_path.read_text(encoding="utf-8")
-
     suffix = scenario_path.suffix.lower()
     if suffix == ".json":
         data = json.loads(text)
@@ -151,7 +166,6 @@ def load_scenario(path: str | Path) -> Scenario:
         data = yaml.safe_load(text)
     else:
         raise ScenarioValidationError("Scenario must be .json, .yaml, or .yml")
-
     if not isinstance(data, dict):
         raise ScenarioValidationError("Scenario document must be a mapping")
 
