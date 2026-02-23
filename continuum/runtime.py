@@ -10,7 +10,7 @@ from time import sleep
 from typing import Any, Protocol
 import uuid
 
-from continuum.errors import ContinuumError, FailureClass
+from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError
 from continuum.evidence import EvidenceCollector
 from continuum.plugins import PluginRegistry, find_unknown_templates, render_templates, resolve_attach_files
 from continuum.scenario import Scenario
@@ -157,6 +157,7 @@ class DeterministicRuntime:
                     "key": step.key,
                     "type": step.type,
                     "phase": phase,
+                    "status": "succeeded" if result.ok else "failed",
                     "ok": result.ok,
                     "details": result.details,
                     "evidence": result.evidence_paths,
@@ -183,6 +184,7 @@ class DeterministicRuntime:
             "key": step.key,
             "type": step.type,
             "phase": phase,
+            "status": "failed",
             "ok": False,
             "attempts": attempts,
             "failure": last_error,
