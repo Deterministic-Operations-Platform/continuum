@@ -22,6 +22,14 @@ def main() -> None:
     run.add_argument("--only", dest="only_selectors", action="append", default=[], help="Selector to include")
     run.add_argument("--skip", dest="skip_selectors", action="append", default=[], help="Selector to skip")
     run.add_argument("--no-cleanup", dest="no_cleanup", action="store_true", help="Do not run cleanup_steps")
+    run.add_argument("--resume-id", dest="resume_id", default=None, help="Resume from a previous run id")
+    run.add_argument("--from-failure", dest="from_failure", action="store_true", help="Resume from first previously failed step")
+    run.add_argument("--rerun", dest="rerun_selectors", action="append", default=[], help="Force rerun selector while resuming")
+    run.add_argument("--no-services", dest="no_services", action="store_true", help="Skip service provisioning")
+    run.add_argument("--stop-services", dest="stop_services", action="store_true", help="Stop services at end of run")
+    run.add_argument("--no-reuse-sessions", dest="reuse_sessions", action="store_false", help="Disable service session reuse")
+    run.add_argument("--max-parallel", dest="max_parallel", type=int, default=4, help="Maximum concurrent runnable steps")
+    run.add_argument("--no-parallel", dest="no_parallel", action="store_true", help="Force sequential step execution")
 
     validate = sub.add_parser("validate", help="Validate scenario without executing")
     validate.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -49,7 +57,16 @@ def main() -> None:
                 no_services=args.no_services,
                 stop_services=args.stop_services,
                 reuse_sessions=args.reuse_sessions,
-                resume_run_id=args.resume_run_id,
+                resume_id=args.resume_id,
+                from_selector=args.from_selector,
+                to_selector=args.to_selector,
+                only_selectors=tuple(args.only_selectors),
+                skip_selectors=tuple(args.skip_selectors),
+                rerun_selectors=tuple(args.rerun_selectors),
+                from_failure=args.from_failure,
+                no_cleanup=args.no_cleanup,
+                max_parallel=args.max_parallel,
+                no_parallel=args.no_parallel,
             )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             print(f"Run [bold]{summary['run_id']}[/bold] finished with [{status_style}]{summary['status']}[/{status_style}]")

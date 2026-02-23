@@ -17,12 +17,14 @@ from continuum.errors import ScenarioValidationError
 class ScenarioStep:
     name: str
     type: str
-    with_: dict[str, Any]
+    with_: dict[str, Any] = field(default_factory=dict)
     publish: dict[str, str] | None = None
     key: str = ""
     always: bool = False
     retry: dict[str, Any] | None = None
     legacy_retry_used: bool = False
+    depends_on: tuple[str, ...] | None = None
+    resources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +149,18 @@ def _parse_steps(raw_steps: list[Any], *, label: str) -> list[ScenarioStep]:
             if not isinstance(publish, dict) or not all(isinstance(v, str) for v in publish.values()):
                 raise ScenarioValidationError(f"{label} step {index} publish must be a mapping of string expressions")
             retry, legacy = normalize_retry(raw_step)
+            depends_on_raw = raw_step.get("dependsOn", None)
+            if depends_on_raw is None:
+                depends_on = None
+            else:
+                depends_on = depends_on_raw
+            if depends_on is not None and (
+                not isinstance(depends_on, list) or not all(isinstance(v, str) and v.strip() for v in depends_on)
+            ):
+                raise ScenarioValidationError(f"{label} step {index} dependsOn must be an array of non-empty strings")
+            resources = raw_step.get("resources") or []
+            if not isinstance(resources, list) or not all(isinstance(v, str) and v.strip() for v in resources):
+                raise ScenarioValidationError(f"{label} step {index} resources must be an array of non-empty strings")
             parsed_steps.append(
                 ScenarioStep(
                     name=name,
@@ -157,6 +171,8 @@ def _parse_steps(raw_steps: list[Any], *, label: str) -> list[ScenarioStep]:
                     always=bool(raw_step.get("always", False)),
                     retry=retry,
                     legacy_retry_used=legacy,
+                    depends_on=None if depends_on is None else tuple(v.strip() for v in depends_on),
+                    resources=tuple(v.strip() for v in resources),
                 )
             )
             continue
