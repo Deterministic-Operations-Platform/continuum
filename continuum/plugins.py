@@ -72,7 +72,7 @@ def find_unknown_templates(value: Any, *, ctx: dict[str, Any]) -> list[str]:
     if isinstance(value, str):
         for match in TEMPLATE_PATTERN.finditer(value):
             key = match.group(1).strip()
-            if key in {"runId", "runDir"}:
+            if key in {"runId", "runDir", "traceId"}:
                 continue
             if key.startswith("env."):
                 if _lookup(key, ctx) is None:
@@ -99,6 +99,8 @@ def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
                 return str(ctx.get("run_id", ""))
             if key == "runDir":
                 return str(ctx.get("run_dir", ""))
+            if key == "traceId":
+                return str(_lookup("vars.traceId", ctx) or "")
             resolved = _lookup(key, ctx)
             return "" if resolved is None else str(resolved)
         return TEMPLATE_PATTERN.sub(repl, value)
@@ -226,6 +228,7 @@ def ensure_applauncher_session(
     *,
     session_registry: dict[str, Any],
     allow_reuse: bool,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     command = cfg.get("command")
     if not isinstance(command, str) or not command.strip():
@@ -256,7 +259,13 @@ def ensure_applauncher_session(
             reused = True
 
     if not reused:
-        proc = subprocess.Popen([command, *args], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(
+            [command, *args],
+            cwd=cwd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={**os.environ, **(extra_env or {})},
+        )
         pid = int(proc.pid)
         if isinstance(health_url, str) and health_url.strip():
             health_ok, status_code, verify_error = _check_health(health_url, verify_timeout_sec)
@@ -292,6 +301,7 @@ def ensure_applauncher_session(
         "command": command,
         "args": args,
         "cwd": cwd,
+        "env": dict(extra_env or {}),
     }
     return exports, evidence
 
@@ -468,15 +478,38 @@ class PostmanRunPlugin:
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
         step_dir = ctx["step_dir"](step_index, step_name)
+        trace_id = str(ctx.get("vars", {}).get("traceId") or "")
+        run_id = str(ctx.get("run_id") or "")
+        env_var = dict(step_with.get("envVar") or {})
+        env_var.update({"traceId": trace_id, "runId": run_id})
         if shutil.which("newman") is None:
             path = ctx["write_json"](
                 ctx["step_dir"](step_index, step_name),
                 "missing-dependency.json",
-                {"missing": "newman", "message": "postman.run requires newman"},
+                {
+                    "missing": "newman",
+                    "message": "postman.run requires newman",
+                    "envVar": env_var,
+                    "headers": {
+                        "X-Continuum-Run-Id": run_id,
+                        "X-Continuum-Trace-Id": trace_id,
+                    },
+                },
             )
-            return StepResult(ok=False, details={"error": "postman.run requires newman"}, evidence_paths=[path])
-        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "newman-summary.json", {"returncode": 0})
-        return StepResult(ok=True, details={"returncode": 0}, evidence_paths=[path])
+            return StepResult(ok=False, details={"error": "postman.run requires newman"}, evidence_paths=[path], exports={"postmanTraceId": trace_id})
+        path = ctx["write_json"](
+            ctx["step_dir"](step_index, step_name),
+            "newman-summary.json",
+            {
+                "returncode": 0,
+                "envVar": env_var,
+                "headers": {
+                    "X-Continuum-Run-Id": run_id,
+                    "X-Continuum-Trace-Id": trace_id,
+                },
+            },
+        )
+        return StepResult(ok=True, details={"returncode": 0, "traceId": trace_id}, evidence_paths=[path], exports={"postmanTraceId": trace_id})
 
 
 class MongoVerifyPlugin:
@@ -490,8 +523,21 @@ class MongoVerifyPlugin:
             return {"ok": False, "missing": ["pymongo"]}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "assertions.json", {"ok": True})
-        return StepResult(ok=True, details={"ok": True}, evidence_paths=[path])
+        trace_id = str(ctx.get("vars", {}).get("traceId") or "")
+        auto_filter = bool(step_with.get("autoFilterTraceId", False))
+        queries = step_with.get("queries") or []
+        applied = False
+        if isinstance(queries, list):
+            for query in queries:
+                if not isinstance(query, dict):
+                    continue
+                filter_obj = query.get("filter")
+                if auto_filter and isinstance(filter_obj, dict) and "traceId" not in filter_obj:
+                    filter_obj["traceId"] = trace_id
+                    applied = True
+        payload = {"ok": True, "queries": queries, "traceId": trace_id, "traceQueryApplied": applied}
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "assertions.json", payload)
+        return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"traceQueryApplied": applied})
 
 
 class JiraFetchPlugin:
@@ -510,8 +556,12 @@ class JiraCommentPlugin:
     type = "jira.comment"
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "comment.json", {"ok": True})
-        return StepResult(ok=True, details={"ok": True}, evidence_paths=[path])
+        run_id = str(ctx.get("run_id") or "")
+        trace_id = str(ctx.get("vars", {}).get("traceId") or "")
+        status = str(ctx.get("vars", {}).get("status") or "completed")
+        body = str(step_with.get("body") or f"Run {run_id} finished with status {status}. Trace {trace_id}. Report attached.")
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "comment.json", {"ok": True, "body": body})
+        return StepResult(ok=True, details={"ok": True, "body": body}, evidence_paths=[path])
 
 
 class JiraAttachPlugin:
