@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from continuum.evidence import EvidenceCollector
-from continuum.plugins import PluginRegistry, StepResult
+from continuum.plugins import PluginRegistry, StepResult, resolve_attach_files
 from continuum.runtime import DeterministicRuntime
 from continuum.scenario import Scenario, ScenarioStep
 
@@ -132,6 +132,59 @@ steps:
         self.assertEqual(summary["steps"][2]["name"], "Stop AppLauncher")
         self.assertTrue(summary["steps"][2]["ok"])
         self.assertTrue((run_dir / "evidence" / "03-Stop_AppLauncher").exists())
+
+
+    def test_resolve_attach_files_supports_globs_step_dirs_and_bundle(self) -> None:
+        run_dir = REPO_ROOT / "runs" / "test-resolve-attach-files"
+        self.addCleanup(lambda: shutil.rmtree(run_dir, ignore_errors=True))
+
+        postman_dir = run_dir / "evidence" / "03-run_postman"
+        mongo_dir = run_dir / "evidence" / "04-verify_mongo"
+        postman_dir.mkdir(parents=True, exist_ok=True)
+        mongo_dir.mkdir(parents=True, exist_ok=True)
+
+        (postman_dir / "newman-report.html").write_text("report", encoding="utf-8")
+        (mongo_dir / "assertions.json").write_text("{}", encoding="utf-8")
+
+        for bundle_file in ("scenario.yaml", "context.json", "summary.json", "manifest.json"):
+            (run_dir / bundle_file).write_text("{}", encoding="utf-8")
+
+        files = resolve_attach_files(
+            {
+                "globs": [
+                    str(run_dir / "evidence" / "**" / "newman-report.html"),
+                    str(run_dir / "evidence" / "**" / "assertions.json"),
+                ],
+                "fromSteps": ["Run Postman", "verify mongo"],
+                "includeRunBundle": True,
+                "recursive": True,
+                "maxFiles": 10,
+            },
+            str(run_dir),
+        )
+
+        expected = sorted(
+            {
+                str(postman_dir / "newman-report.html"),
+                str(mongo_dir / "assertions.json"),
+                str(run_dir / "scenario.yaml"),
+                str(run_dir / "context.json"),
+                str(run_dir / "summary.json"),
+                str(run_dir / "manifest.json"),
+            }
+        )
+        self.assertEqual(files, expected)
+
+        capped_files = resolve_attach_files(
+            {
+                "globs": [str(run_dir / "evidence" / "**" / "*.json")],
+                "includeRunBundle": True,
+                "maxFiles": 2,
+            },
+            str(run_dir),
+        )
+        self.assertEqual(len(capped_files), 2)
+        self.assertEqual(capped_files, sorted(capped_files))
 
 
 if __name__ == "__main__":

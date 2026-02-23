@@ -62,6 +62,77 @@ def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
     return value
 
 
+def _slug(value: str) -> str:
+    normalized = value.strip().lower()
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+    return normalized
+
+
+def _list_files(root: str, recursive: bool) -> list[str]:
+    files: list[str] = []
+    if recursive:
+        for base, _, names in os.walk(root):
+            for name in names:
+                files.append(os.path.join(base, name))
+        return files
+
+    for name in os.listdir(root):
+        path = os.path.join(root, name)
+        if os.path.isfile(path):
+            files.append(path)
+    return files
+
+
+def resolve_attach_files(cfg: dict[str, Any], run_dir: str) -> list[str]:
+    out: list[str] = []
+
+    for pattern in cfg.get("globs") or []:
+        if not isinstance(pattern, str):
+            continue
+        resolved_pattern = pattern if os.path.isabs(pattern) else os.path.join(run_dir, pattern)
+        out.extend(glob.glob(resolved_pattern, recursive=True))
+
+    files = cfg.get("files") or []
+    for file_path in files:
+        rendered = str(file_path)
+        if any(token in rendered for token in "*?[]"):
+            resolved_pattern = rendered if os.path.isabs(rendered) else os.path.join(run_dir, rendered)
+            out.extend(glob.glob(resolved_pattern, recursive=True))
+        else:
+            out.append(rendered if os.path.isabs(rendered) else os.path.join(run_dir, rendered))
+
+    evidence_root = os.path.join(run_dir, "evidence")
+    if os.path.isdir(evidence_root):
+        dirs = [os.path.join(evidence_root, d) for d in os.listdir(evidence_root)]
+        dirs = [d for d in dirs if os.path.isdir(d)]
+
+        wanted = cfg.get("fromSteps") or []
+        recursive = bool(cfg.get("recursive", True))
+
+        for wanted_step in wanted:
+            step_name = str(wanted_step)
+            if re.match(r"^\d{2}\-", step_name):
+                matches = [d for d in dirs if os.path.basename(d).startswith(step_name)]
+            else:
+                slug = _slug(step_name)
+                matches = [d for d in dirs if os.path.basename(d).split("-", 1)[-1].endswith(slug)]
+
+            for match in sorted(matches):
+                out.extend(_list_files(match, recursive))
+
+    if cfg.get("includeRunBundle"):
+        for artifact in ["scenario.yaml", "context.json", "summary.json", "manifest.json"]:
+            path = os.path.join(run_dir, artifact)
+            if os.path.isfile(path):
+                out.append(path)
+
+    out = [path for path in out if os.path.isfile(path)]
+    out = sorted(set(out))
+
+    max_files = int(cfg.get("maxFiles", 25))
+    return out[:max_files]
+
+
 class AppLauncherStartPlugin:
     type = "applauncher.start"
 
@@ -401,22 +472,25 @@ class JiraAttachPlugin(JiraPluginBase):
             return preflight_result
 
         issue_key = step_with.get("issueKey") or ctx["vars"].get("issueKey")
-        files = list(step_with.get("files", []))
         if not isinstance(issue_key, str) or not issue_key.strip():
             raise StepExecutionError("jira.attach requires issueKey")
-        if not files:
-            raise StepExecutionError("jira.attach requires with.files")
 
-        resolved_files: list[str] = []
-        for file_path in files:
-            rendered = str(file_path)
-            if any(token in rendered for token in "*?[]"):
-                resolved_files.extend(sorted(glob.glob(rendered, recursive=True)))
-            else:
-                resolved_files.append(rendered)
+        has_sources = any(step_with.get(key) for key in ["files", "globs", "fromSteps"]) or bool(
+            step_with.get("includeRunBundle")
+        )
+        if not has_sources:
+            raise StepExecutionError("jira.attach requires one of with.files, with.globs, with.fromSteps, includeRunBundle")
+
+        step_dir = ctx["step_dir"](step_index, step_name)
+        resolved_files = resolve_attach_files(step_with, ctx["run_dir"])
+        resolved_path = ctx["write_json"](step_dir, "resolved_files.json", {"files": resolved_files})
 
         if not resolved_files:
-            raise StepExecutionError("jira.attach did not resolve any files")
+            return StepResult(
+                ok=False,
+                details={"error": "No files resolved to attach"},
+                evidence_paths=[resolved_path],
+            )
 
         # Cloud Jira requires multipart form-data; use curl for portability.
         base = step_with.get("baseUrl") or ctx["env"].get("JIRA_BASE_URL")
@@ -443,7 +517,11 @@ class JiraAttachPlugin(JiraPluginBase):
 
         payload = json.loads(proc.stdout) if proc.stdout.strip() else []
         attachments_path = ctx["write_json"](step_dir, "attachments.json", payload)
-        return StepResult(ok=True, details={"issueKey": issue_key, "files": resolved_files}, evidence_paths=[attachments_path])
+        return StepResult(
+            ok=True,
+            details={"issueKey": issue_key, "files": resolved_files},
+            evidence_paths=[resolved_path, attachments_path],
+        )
 
 
 class LegacyPlugin:
