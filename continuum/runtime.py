@@ -78,6 +78,7 @@ class DeterministicRuntime:
             "status": "failed" if failure else "succeeded",
             "steps": [asdict(record) for record in records],
             "failure": failure,
+            "evidence_dir": str(Path("runs") / resolved_run_id),
         }
         run_dir = self.evidence_collector.write_run_bundle(
             run_id=resolved_run_id,
