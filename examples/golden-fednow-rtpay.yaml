@@ -4,23 +4,16 @@ vars:
   issueKey: RTPAY-123
 
 steps:
-  - name: start-applauncher
-    type: applauncher.start
+  - name: ensure-applauncher
+    type: applauncher.ensure
     with:
+      session: fednow-rtpay
       command: python
       args: ["-m", "http.server", "8077"]
+      healthUrl: http://127.0.0.1:8077
+      verifyTimeoutSec: 30
     publish:
       appPid: $.details.pid
-
-  - name: wait-health
-    type: http.health
-    with:
-      url: http://127.0.0.1:8077
-      timeoutSec: 30
-      retries: 3
-      backoffMs: 1000
-    publish:
-      healthStatus: $.details.status
 
   - name: run-collection
     type: postman.run
@@ -48,7 +41,7 @@ steps:
     type: jira.comment
     with:
       issueKey: ${issueKey}
-      body: "Run ${runId} completed with health status ${healthStatus}."
+      body: "Run ${runId} completed with AppLauncher PID ${appPid}."
 
   - name: jira-attach-evidence
     type: jira.attach
@@ -60,6 +53,6 @@ steps:
 
 cleanup_steps:
   - name: stop-applauncher
-    type: applauncher.stop
+    type: applauncher.session.stop
     with:
-      pid: ${appPid}
+      session: fednow-rtpay

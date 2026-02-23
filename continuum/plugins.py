@@ -16,6 +16,15 @@ import urllib.error
 import urllib.request
 
 from continuum.errors import PluginResolutionError, StepExecutionError
+from continuum.sessions import (
+    file_lock,
+    fingerprint,
+    kill_tree,
+    load_sessions,
+    now_iso,
+    pid_alive,
+    save_sessions,
+)
 
 
 @dataclass(slots=True)
@@ -33,6 +42,17 @@ class Plugin(Protocol):
 
 
 TEMPLATE_PATTERN = re.compile(r"\$\{([^}]+)\}")
+_BACKGROUND_PROCS: dict[int, subprocess.Popen[Any]] = {}
+
+
+def _kill_and_reap(pid: int) -> None:
+    kill_tree(pid)
+    proc = _BACKGROUND_PROCS.pop(pid, None)
+    if proc is not None:
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
 
 
 def _lookup(path: str, ctx: dict[str, Any]) -> Any:
@@ -178,6 +198,128 @@ class AppLauncherStopPlugin:
         return StepResult(ok=True, details={"pid": int(pid), "stopped": True}, evidence_paths=[path])
 
 
+def _verify_health(*, health_url: str | None, timeout_sec: int) -> dict[str, Any]:
+    if not health_url:
+        return {"ok": True, "status": None, "error": None, "url": None}
+    deadline = time.time() + max(1, timeout_sec)
+    status: int | None = None
+    last_error: str | None = None
+    ok = False
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(health_url, timeout=2) as response:
+                status = response.status
+                ok = 200 <= response.status < 300
+                if ok:
+                    break
+        except Exception as err:
+            last_error = str(err)
+        time.sleep(0.25)
+    return {"ok": ok, "status": status, "error": None if ok else (last_error or "timeout"), "url": health_url}
+
+
+class AppLauncherEnsurePlugin:
+    type = "applauncher.ensure"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        command = step_with.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise StepExecutionError("applauncher.ensure requires with.command")
+        args = [str(v) for v in step_with.get("args", [])]
+        session = step_with.get("session")
+        if not isinstance(session, str) or not session.strip():
+            raise StepExecutionError("applauncher.ensure requires with.session")
+        cwd = str(step_with.get("cwd", "."))
+        health_url = step_with.get("healthUrl")
+        verify_timeout_sec = int(step_with.get("verifyTimeoutSec", 10))
+        env_keys = [str(v) for v in step_with.get("envKeysForFingerprint", [])]
+        reuse = bool(step_with.get("reuse", True))
+        desired_fingerprint = fingerprint(command, args, cwd, env_keys)
+
+        step_dir = ctx["step_dir"](step_index, step_name)
+        verify_details: dict[str, Any]
+
+        with file_lock():
+            sessions = load_sessions()
+            existing = sessions.get(session) if isinstance(sessions.get(session), dict) else None
+            should_reuse = False
+            pid: int | None = None
+
+            if existing and reuse:
+                existing_pid = int(existing.get("pid", 0))
+                same_fingerprint = existing.get("fingerprint") == desired_fingerprint
+                alive = pid_alive(existing_pid)
+                if alive and same_fingerprint:
+                    verify_details = _verify_health(health_url=health_url, timeout_sec=verify_timeout_sec)
+                    should_reuse = bool(verify_details["ok"])
+                    if should_reuse:
+                        pid = existing_pid
+                        existing["lastVerifiedAt"] = now_iso()
+                        sessions[session] = existing
+                    else:
+                        _kill_and_reap(existing_pid)
+                        sessions.pop(session, None)
+                else:
+                    if alive:
+                        _kill_and_reap(existing_pid)
+                    sessions.pop(session, None)
+
+            if not should_reuse:
+                proc = subprocess.Popen(
+                    [command, *args],
+                    cwd=cwd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=(os.name != "nt"),
+                )
+                pid = proc.pid
+                _BACKGROUND_PROCS[pid] = proc
+                verify_details = _verify_health(health_url=health_url, timeout_sec=verify_timeout_sec)
+                if not verify_details["ok"]:
+                    _kill_and_reap(pid)
+                    raise StepExecutionError(f"applauncher.ensure failed health check: {verify_details.get('error')}")
+                sessions[session] = {
+                    "pid": pid,
+                    "startedAt": now_iso(),
+                    "healthUrl": health_url,
+                    "cmd": command,
+                    "args": args,
+                    "cwd": cwd,
+                    "fingerprint": desired_fingerprint,
+                    "runIdStarted": ctx.get("run_id"),
+                    "lastVerifiedAt": now_iso(),
+                }
+
+            save_sessions(sessions)
+
+        details = {"session": session, "pid": int(pid or 0), "reused": should_reuse, "fingerprint": desired_fingerprint}
+        session_path = ctx["write_json"](step_dir, "session.json", details)
+        verify_path = ctx["write_json"](step_dir, "verify.json", verify_details)
+        exports = {"applauncherPid": int(pid or 0), "applauncherReused": should_reuse}
+        return StepResult(ok=True, details=details, evidence_paths=[session_path, verify_path], exports=exports)
+
+
+class AppLauncherSessionStopPlugin:
+    type = "applauncher.session.stop"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        session = step_with.get("session")
+        if not isinstance(session, str) or not session.strip():
+            raise StepExecutionError("applauncher.session.stop requires with.session")
+        stopped_pid: int | None = None
+        with file_lock():
+            sessions = load_sessions()
+            entry = sessions.get(session) if isinstance(sessions.get(session), dict) else None
+            if entry:
+                stopped_pid = int(entry.get("pid", 0))
+                _kill_and_reap(stopped_pid)
+                sessions.pop(session, None)
+                save_sessions(sessions)
+        payload = {"session": session, "pid": stopped_pid, "stopped": stopped_pid is not None}
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "stopped.json", payload)
+        return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"applauncherPid": None})
+
+
 class HttpHealthPlugin:
     type = "http.health"
 
@@ -280,6 +422,8 @@ class PluginRegistry:
         initial_plugins = plugins or [
             AppLauncherStartPlugin(),
             AppLauncherStopPlugin(),
+            AppLauncherEnsurePlugin(),
+            AppLauncherSessionStopPlugin(),
             HttpHealthPlugin(),
             PostmanRunPlugin(),
             MongoVerifyPlugin(),
