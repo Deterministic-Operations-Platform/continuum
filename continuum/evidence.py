@@ -40,6 +40,7 @@ class EvidenceCollector:
         scenario_text: str,
         context_payload: dict[str, Any],
         summary: dict[str, Any],
+        manifest_payload: dict[str, Any] | None = None,
     ) -> Path:
         run_dir = Path("runs") / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -63,8 +64,10 @@ class EvidenceCollector:
             "tooling": metadata,
             "artifacts": artifacts,
         }
+        if manifest_payload:
+            manifest_data.update(manifest_payload)
         (run_dir / "manifest.json").write_text(
-            json.dumps(manifest_payload, indent=2, sort_keys=True), encoding="utf-8"
+            json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8"
         )
 
         return run_dir
