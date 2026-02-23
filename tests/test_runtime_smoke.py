@@ -49,15 +49,14 @@ class ContinuumSmokeTests(unittest.TestCase):
         summary_path = run_dir / "summary.json"
         manifest_path = run_dir / "manifest.json"
         scenario_path = run_dir / "scenario.yaml"
-        events_path = run_dir / "events.log"
+        context_path = run_dir / "context.json"
 
-        for artifact in (summary_path, manifest_path, scenario_path, events_path):
+        for artifact in (summary_path, manifest_path, scenario_path, context_path):
             self.assertTrue(artifact.exists(), f"Missing artifact: {artifact}")
 
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         self.assertEqual(summary["run_id"], run_id)
         self.assertEqual(summary["status"], "succeeded")
-
 
 
 if __name__ == "__main__":

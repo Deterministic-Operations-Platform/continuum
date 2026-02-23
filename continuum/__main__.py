@@ -29,9 +29,15 @@ def main() -> None:
     if args.cmd == "run":
         scenario_path = Path(args.scenario)
         try:
+            scenario_text = scenario_path.read_text(encoding="utf-8")
             scenario = load_scenario(scenario_path)
             runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
-            summary = runtime.execute(scenario=scenario, scenario_source=scenario_path, run_id=args.run_id)
+            summary = runtime.execute(
+                scenario=scenario,
+                scenario_source=scenario_path,
+                scenario_text=scenario_text,
+                run_id=args.run_id,
+            )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             print(f"Run [bold]{summary['run_id']}[/bold] finished with [{status_style}]{summary['status']}[/{status_style}]")
             print(f"Evidence: [bold]{summary['evidence_dir']}[/bold]")
