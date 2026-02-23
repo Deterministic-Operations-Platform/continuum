@@ -64,8 +64,8 @@ class EvidenceCollector:
         lines = [f"run_id={summary['run_id']} status={summary['status']}"]
         for step in summary.get("steps", []):
             message = (
-                f"phase={step.get('phase', 'execution')} step={step['index']} plugin={step['plugin']} "
-                f"action={step['action']} status={step['status']}"
+                f"step={step['index']} plugin={step['plugin']} action={step['action']} "
+                f"status={step['status']}"
             )
             if step.get("error"):
                 message = f"{message} error={step['error']}"
