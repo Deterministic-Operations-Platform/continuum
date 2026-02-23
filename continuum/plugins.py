@@ -9,11 +9,12 @@ import glob
 import json
 import os
 import re
+import sqlite3
 import shutil
 import signal
 import subprocess
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 import urllib.error
 import urllib.request
 
@@ -77,6 +78,10 @@ def find_unknown_templates(value: Any, *, ctx: dict[str, Any]) -> list[str]:
             if key.startswith("env."):
                 if _lookup(key, ctx) is None:
                     unknown.append(key)
+            elif key.startswith("secret."):
+                secret_name = key.split(".", 1)[1]
+                if _lookup(f"env.{secret_name}", ctx) is None:
+                    unknown.append(key)
             elif key.startswith("vars."):
                 if _lookup(key, ctx) is None:
                     unknown.append(key)
@@ -101,6 +106,9 @@ def render_templates(value: Any, *, ctx: dict[str, Any]) -> Any:
                 return str(ctx.get("run_dir", ""))
             if key == "traceId":
                 return str(_lookup("vars.traceId", ctx) or "")
+            if key.startswith("secret."):
+                secret_name = key.split(".", 1)[1]
+                return str(_lookup(f"env.{secret_name}", ctx) or "")
             resolved = _lookup(key, ctx)
             return "" if resolved is None else str(resolved)
         return TEMPLATE_PATTERN.sub(repl, value)
@@ -191,10 +199,12 @@ def _is_pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except ProcessLookupError:
-        return False
     except PermissionError:
         return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False
 
 
 def _check_health(url: str, timeout_sec: int) -> tuple[bool, int | None, str | None]:
@@ -470,6 +480,31 @@ class HttpHealthPlugin:
         return StepResult(ok=ok, details=details, evidence_paths=[path])
 
 
+class PreflightChecklistPlugin:
+    type = "preflight.checklist"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        env_required = [str(v).strip() for v in (step_with.get("envRequired") or []) if str(v).strip()]
+        commands = [str(v).strip() for v in (step_with.get("commands") or []) if str(v).strip()]
+        files = [str(v).strip() for v in (step_with.get("files") or []) if str(v).strip()]
+
+        env_missing = [key for key in env_required if not ctx.get("env", {}).get(key)]
+        cmd_missing = [cmd for cmd in commands if shutil.which(cmd) is None]
+        file_missing = [path for path in files if not Path(path).is_file()]
+
+        details = {
+            "ok": not env_missing and not cmd_missing and not file_missing,
+            "envRequired": env_required,
+            "commands": commands,
+            "files": files,
+            "envMissing": env_missing,
+            "commandsMissing": cmd_missing,
+            "filesMissing": file_missing,
+        }
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "preflight.json", details)
+        return StepResult(ok=details["ok"], details=details, evidence_paths=[path], exports={"preflightOk": details["ok"]})
+
+
 class PostmanRunPlugin:
     type = "postman.run"
 
@@ -477,18 +512,21 @@ class PostmanRunPlugin:
         return {"ok": shutil.which("newman") is not None, "missing": ["newman"] if shutil.which("newman") is None else []}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        step_dir = ctx["step_dir"](step_index, step_name)
+        step_dir = Path(ctx["step_dir"](step_index, step_name))
+        step_dir.mkdir(parents=True, exist_ok=True)
         trace_id = str(ctx.get("vars", {}).get("traceId") or "")
         run_id = str(ctx.get("run_id") or "")
         env_var = dict(step_with.get("envVar") or {})
         env_var.update({"traceId": trace_id, "runId": run_id})
         if shutil.which("newman") is None:
+            allow_missing = bool(step_with.get("allowMissingDependency", False))
             path = ctx["write_json"](
                 ctx["step_dir"](step_index, step_name),
                 "missing-dependency.json",
                 {
                     "missing": "newman",
                     "message": "postman.run requires newman",
+                    "allowMissingDependency": allow_missing,
                     "envVar": env_var,
                     "headers": {
                         "X-Continuum-Run-Id": run_id,
@@ -496,20 +534,69 @@ class PostmanRunPlugin:
                     },
                 },
             )
-            return StepResult(ok=False, details={"error": "postman.run requires newman"}, evidence_paths=[path], exports={"postmanTraceId": trace_id})
+            return StepResult(ok=allow_missing, details={"error": "postman.run requires newman"}, evidence_paths=[path], exports={"postmanTraceId": trace_id})
+        collection = step_with.get("collection")
+        if not isinstance(collection, str) or not collection.strip():
+            raise StepExecutionError("postman.run requires with.collection")
+
+        command = ["newman", "run", collection]
+        environment = step_with.get("environment")
+        if isinstance(environment, str) and environment.strip():
+            command.extend(["-e", environment])
+        iterations = step_with.get("iterations")
+        if iterations is not None:
+            command.extend(["--iteration-count", str(int(iterations))])
+
+        reporters_raw = step_with.get("reporters", "cli,json")
+        reporters = [item.strip() for item in str(reporters_raw).split(",") if item.strip()]
+        command.extend(["--reporters", ",".join(reporters)])
+        report_json = step_dir / "newman-report.json"
+        report_junit = step_dir / "newman-report.xml"
+        if "json" in reporters:
+            command.extend(["--reporter-json-export", str(report_json)])
+        if "junit" in reporters:
+            command.extend(["--reporter-junit-export", str(report_junit)])
+
+        for key, value in env_var.items():
+            command.extend(["--env-var", f"{key}={value}"])
+
+        timeout_sec = int(step_with.get("timeoutSec", 900))
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_sec,
+        )
+        stdout_path = step_dir / "newman.stdout.log"
+        stderr_path = step_dir / "newman.stderr.log"
+        stdout_path.write_text(proc.stdout or "", encoding="utf-8")
+        stderr_path.write_text(proc.stderr or "", encoding="utf-8")
+
         path = ctx["write_json"](
             ctx["step_dir"](step_index, step_name),
             "newman-summary.json",
             {
-                "returncode": 0,
+                "returncode": int(proc.returncode),
+                "command": command,
                 "envVar": env_var,
                 "headers": {
                     "X-Continuum-Run-Id": run_id,
                     "X-Continuum-Trace-Id": trace_id,
                 },
+                "stdoutPath": str(stdout_path),
+                "stderrPath": str(stderr_path),
+                "reportJson": str(report_json) if report_json.exists() else None,
+                "reportJunit": str(report_junit) if report_junit.exists() else None,
             },
         )
-        return StepResult(ok=True, details={"returncode": 0, "traceId": trace_id}, evidence_paths=[path], exports={"postmanTraceId": trace_id})
+        ok = proc.returncode == 0
+        return StepResult(
+            ok=ok,
+            details={"returncode": int(proc.returncode), "traceId": trace_id},
+            evidence_paths=[path, str(stdout_path), str(stderr_path)],
+            exports={"postmanTraceId": trace_id},
+        )
 
 
 class MongoVerifyPlugin:
@@ -540,6 +627,65 @@ class MongoVerifyPlugin:
         return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"traceQueryApplied": applied})
 
 
+class SqlVerifyPlugin:
+    type = "sql.verify"
+
+    def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        database = step_with.get("database")
+        if not isinstance(database, str) or not database.strip():
+            return {"ok": False, "missing": ["with.database"]}
+        return {"ok": True, "missing": []}
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        database = step_with.get("database")
+        if not isinstance(database, str) or not database.strip():
+            raise StepExecutionError("sql.verify requires with.database (sqlite path)")
+        queries = step_with.get("queries") if isinstance(step_with.get("queries"), list) else []
+        assertions = step_with.get("assert") if isinstance(step_with.get("assert"), list) else []
+        seed_statements = [str(v).strip() for v in (step_with.get("seedStatements") or []) if str(v).strip()]
+
+        query_results: dict[str, Any] = {}
+        conn = sqlite3.connect(database)
+        try:
+            for statement in seed_statements:
+                conn.execute(statement)
+            if seed_statements:
+                conn.commit()
+            for query in queries:
+                if not isinstance(query, dict):
+                    continue
+                name = str(query.get("name") or "")
+                sql = str(query.get("sql") or "")
+                params = query.get("params") if isinstance(query.get("params"), list) else []
+                if not name or not sql:
+                    continue
+                cursor = conn.execute(sql, params)
+                rows = cursor.fetchall()
+                query_results[name] = {
+                    "count": len(rows),
+                    "rows": [list(row) for row in rows],
+                }
+        finally:
+            conn.close()
+
+        assertion_results: list[dict[str, Any]] = []
+        all_ok = True
+        for assertion in assertions:
+            if not isinstance(assertion, dict):
+                continue
+            query_name = str(assertion.get("query") or "")
+            op = str(assertion.get("op") or "eq")
+            expected = assertion.get("value", 0)
+            actual = int((query_results.get(query_name) or {}).get("count", 0))
+            ok = _compare_numeric(actual, op, expected)
+            assertion_results.append({"query": query_name, "op": op, "expected": expected, "actual": actual, "ok": ok})
+            all_ok = all_ok and ok
+
+        payload = {"ok": all_ok, "database": database, "seedStatements": seed_statements, "queryResults": query_results, "assertions": assertion_results}
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "assertions.json", payload)
+        return StepResult(ok=all_ok, details=payload, evidence_paths=[path], exports={"sqlAssertionsOk": all_ok})
+
+
 class JiraFetchPlugin:
     type = "jira.fetch"
 
@@ -548,8 +694,47 @@ class JiraFetchPlugin:
         return {"ok": not missing, "missing": missing}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "issue.json", {"key": ctx["vars"].get("issueKey")})
-        return StepResult(ok=True, details={"issueKey": ctx["vars"].get("issueKey")}, evidence_paths=[path])
+        issue_key = step_with.get("issueKey") or ctx["vars"].get("issueKey")
+        issue_payload = step_with.get("issue") if isinstance(step_with.get("issue"), dict) else {}
+        labels = [str(v).strip() for v in (issue_payload.get("labels") or []) if str(v).strip()]
+        components_raw = issue_payload.get("components") or []
+        components: list[str] = []
+        if isinstance(components_raw, list):
+            for item in components_raw:
+                if isinstance(item, dict):
+                    name = str(item.get("name") or "").strip()
+                    if name:
+                        components.append(name)
+                elif isinstance(item, str) and item.strip():
+                    components.append(item.strip())
+
+        requirements_map = step_with.get("requirementsMap") if isinstance(step_with.get("requirementsMap"), dict) else {
+            "postman": ["run_postman"],
+            "mongo": ["verify_mongo"],
+            "sql": ["verify_sql"],
+            "logs": ["collect_logs"],
+            "jira": ["jira.comment", "jira.attach"],
+        }
+        required_steps: set[str] = {str(v).strip() for v in (step_with.get("requiredSteps") or []) if str(v).strip()}
+        tokens = [*labels, *components]
+        for token in tokens:
+            lower_token = token.lower()
+            for matcher, mapped in requirements_map.items():
+                if str(matcher).lower() not in lower_token:
+                    continue
+                if isinstance(mapped, list):
+                    for item in mapped:
+                        if isinstance(item, str) and item.strip():
+                            required_steps.add(item.strip())
+
+        details = {
+            "issueKey": issue_key,
+            "labels": labels,
+            "components": components,
+            "requiredSteps": sorted(required_steps),
+        }
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "issue.json", details)
+        return StepResult(ok=True, details=details, evidence_paths=[path], exports={"requiredSteps": sorted(required_steps)})
 
 
 class JiraCommentPlugin:
@@ -571,6 +756,86 @@ class JiraAttachPlugin:
         files = resolve_attach_files(step_with, ctx["run_dir"])
         path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "resolved_files.json", {"files": files})
         return StepResult(ok=bool(files), details={"files": files}, evidence_paths=[path])
+
+
+class GitBranchPlugin:
+    type = "git.branch"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        branch = str(step_with.get("branch") or "").strip()
+        if not branch:
+            raise StepExecutionError("git.branch requires with.branch")
+        base = str(step_with.get("base") or "").strip()
+        command = ["git", "checkout", "-B", branch]
+        if base:
+            command.append(base)
+        proc = subprocess.run(command, capture_output=True, text=True, check=False)
+        details = {
+            "branch": branch,
+            "base": base or None,
+            "returncode": int(proc.returncode),
+            "stdout": (proc.stdout or "").strip(),
+            "stderr": (proc.stderr or "").strip(),
+        }
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "git-branch.json", details)
+        return StepResult(ok=proc.returncode == 0, details=details, evidence_paths=[path], exports={"gitBranch": branch})
+
+
+class GitCommitPlugin:
+    type = "git.commit"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        message = str(step_with.get("message") or "").strip()
+        if not message:
+            raise StepExecutionError("git.commit requires with.message")
+        paths = [str(v) for v in (step_with.get("paths") or ["."])]
+        add_proc = subprocess.run(["git", "add", *paths], capture_output=True, text=True, check=False)
+        commit_cmd = ["git", "commit", "-m", message]
+        if bool(step_with.get("allowEmpty", False)):
+            commit_cmd.append("--allow-empty")
+        commit_proc = subprocess.run(commit_cmd, capture_output=True, text=True, check=False)
+        details = {
+            "paths": paths,
+            "message": message,
+            "addReturncode": int(add_proc.returncode),
+            "commitReturncode": int(commit_proc.returncode),
+            "stdout": (commit_proc.stdout or "").strip(),
+            "stderr": (commit_proc.stderr or "").strip(),
+        }
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "git-commit.json", details)
+        return StepResult(ok=add_proc.returncode == 0 and commit_proc.returncode == 0, details=details, evidence_paths=[path])
+
+
+class GitPrPlugin:
+    type = "git.pr"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        title = str(step_with.get("title") or "").strip()
+        body = str(step_with.get("body") or "").strip()
+        base = str(step_with.get("base") or "main").strip()
+        if not title:
+            raise StepExecutionError("git.pr requires with.title")
+        if shutil.which("gh") is None:
+            details = {
+                "manualRequired": True,
+                "reason": "gh cli not found",
+                "title": title,
+                "body": body,
+                "base": base,
+            }
+            path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "git-pr.json", details)
+            return StepResult(ok=True, details=details, evidence_paths=[path], exports={"prCreated": False})
+        command = ["gh", "pr", "create", "--base", base, "--title", title, "--body", body]
+        proc = subprocess.run(command, capture_output=True, text=True, check=False)
+        details = {
+            "manualRequired": False,
+            "command": command,
+            "returncode": int(proc.returncode),
+            "stdout": (proc.stdout or "").strip(),
+            "stderr": (proc.stderr or "").strip(),
+        }
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "git-pr.json", details)
+        return StepResult(ok=proc.returncode == 0, details=details, evidence_paths=[path], exports={"prCreated": proc.returncode == 0})
 
 
 def _read_tail_lines(path: str, *, max_bytes: int, max_lines: int) -> list[str]:
@@ -603,6 +868,25 @@ def _normalize_signature(line: str) -> str:
     sig = re.sub(r"\b\d+\b", "<n>", sig)
     sig = re.sub(r"\s+", " ", sig)
     return sig[:220]
+
+
+def _compare_numeric(actual: int, op: str, expected: Any) -> bool:
+    try:
+        expected_int = int(expected)
+    except Exception:
+        expected_int = 0
+    operator = op.lower()
+    if operator == "gte":
+        return actual >= expected_int
+    if operator == "lte":
+        return actual <= expected_int
+    if operator == "gt":
+        return actual > expected_int
+    if operator == "lt":
+        return actual < expected_int
+    if operator == "ne":
+        return actual != expected_int
+    return actual == expected_int
 
 
 class LogsCollectPlugin:
@@ -647,6 +931,20 @@ class LogsCollectPlugin:
                 args = [str(v) for v in source.get("args", [])]
                 if command:
                     resolved_sources.append({"name": source_name, "type": source_type, "command": command, "args": args})
+            elif source_type in {"splunk", "elk"}:
+                endpoint = str(source.get("endpoint") or "").strip()
+                query = str(source.get("query") or "").strip()
+                token_env = str(source.get("tokenEnv") or "").strip()
+                if endpoint and query:
+                    resolved_sources.append(
+                        {
+                            "name": source_name,
+                            "type": source_type,
+                            "endpoint": endpoint,
+                            "query": query,
+                            "tokenEnv": token_env or None,
+                        }
+                    )
 
         resolved_sources = resolved_sources[:max_files]
         sources_path = str(step_dir / "sources.json")
@@ -660,7 +958,7 @@ class LogsCollectPlugin:
 
         for src in resolved_sources:
             lines: list[str]
-            src_id = src.get("path") or f"{src.get('command')} {' '.join(src.get('args', []))}".strip()
+            src_id = src.get("path") or src.get("endpoint") or f"{src.get('command')} {' '.join(src.get('args', []))}".strip()
             if src["type"] == "cmd":
                 proc = subprocess.run(
                     [str(src.get("command")), *[str(v) for v in src.get("args", [])]],
@@ -670,6 +968,25 @@ class LogsCollectPlugin:
                     timeout=int(step_with.get("cmdTimeoutSec", 30)),
                 )
                 text = (proc.stdout or "")[-max_bytes:]
+                lines = text.splitlines()[-max_lines:]
+            elif src["type"] in {"splunk", "elk"}:
+                token = ""
+                if isinstance(src.get("tokenEnv"), str) and src["tokenEnv"]:
+                    token = str(ctx.get("env", {}).get(src["tokenEnv"]) or "")
+                query_string = str(src.get("query") or "")
+                endpoint = str(src.get("endpoint") or "")
+                params = urlencode({"q": query_string, "traceId": trace_id, "runId": run_id})
+                url = endpoint + ("&" if "?" in endpoint else "?") + params
+                headers = {"Accept": "application/json"}
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                request = urllib.request.Request(url=url, headers=headers)
+                try:
+                    with urllib.request.urlopen(request, timeout=int(step_with.get("httpTimeoutSec", 30))) as response:
+                        text = response.read().decode("utf-8", errors="replace")
+                except Exception as err:
+                    text = f"ERROR failed to fetch {src['type']} source: {err}"
+                text = text[-max_bytes:]
                 lines = text.splitlines()[-max_lines:]
             else:
                 lines = _read_tail_lines(str(src.get("path", "")), max_bytes=max_bytes, max_lines=max_lines)
@@ -775,11 +1092,16 @@ class PluginRegistry:
             AppLauncherEnsurePlugin(),
             AppLauncherSessionStopPlugin(),
             HttpHealthPlugin(),
+            PreflightChecklistPlugin(),
             PostmanRunPlugin(),
             MongoVerifyPlugin(),
+            SqlVerifyPlugin(),
             JiraFetchPlugin(),
             JiraCommentPlugin(),
             JiraAttachPlugin(),
+            GitBranchPlugin(),
+            GitCommitPlugin(),
+            GitPrPlugin(),
             LogsCollectPlugin(),
         ]
         self._plugins = {p.type: p for p in initial_plugins}

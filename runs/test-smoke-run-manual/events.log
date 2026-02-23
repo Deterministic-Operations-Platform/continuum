@@ -1,7 +1,0 @@
-run_id=test-smoke-run-manual status=succeeded
-step=0 plugin=preflight action=plugins status=ok
-step=1 plugin=preflight action=artifacts-dir status=ok
-step=2 plugin=preflight action=env status=ok
-step=3 plugin=lifecycle-applauncher action=start status=ok
-step=4 plugin=transport-postman action=send status=ok
-step=5 plugin=verify-mongo action=verify status=ok

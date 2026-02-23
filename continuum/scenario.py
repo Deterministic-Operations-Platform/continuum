@@ -34,6 +34,7 @@ class Scenario:
     steps: tuple[ScenarioStep, ...]
     vars: dict[str, Any]
     services: dict[str, dict[str, Any]] = field(default_factory=dict)
+    governance: dict[str, Any] = field(default_factory=dict)
     cleanup_steps: tuple[ScenarioStep, ...] = ()
 
     @staticmethod
@@ -59,6 +60,10 @@ class Scenario:
         if not isinstance(raw_services, dict):
             raise ScenarioValidationError("services must be a mapping when provided")
 
+        raw_governance = data.get("governance") or {}
+        if not isinstance(raw_governance, dict):
+            raise ScenarioValidationError("governance must be a mapping when provided")
+
         return Scenario(
             name=str(data["name"]),
             rail=str(data["rail"]),
@@ -66,6 +71,7 @@ class Scenario:
             cleanup_steps=tuple(_parse_steps(raw_cleanup, label="cleanup_steps")),
             vars=raw_vars,
             services=_parse_services(raw_services),
+            governance=_parse_governance(raw_governance),
         )
 
 
@@ -87,7 +93,30 @@ def _parse_services(raw_services: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return parsed
 
 
+def _parse_governance(raw_governance: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(raw_governance)
+    roles_raw = normalized.get("allowedRoles", normalized.get("requiredRoles", [])) or []
+    if not isinstance(roles_raw, list) or not all(isinstance(v, str) and v.strip() for v in roles_raw):
+        raise ScenarioValidationError("governance.allowedRoles/requiredRoles must be an array of non-empty strings")
+    normalized["allowedRoles"] = [str(v).strip() for v in roles_raw]
+    if "requiredRoles" in normalized:
+        normalized["requiredRoles"] = [str(v).strip() for v in roles_raw]
+
+    if "requireApproval" in normalized and not isinstance(normalized["requireApproval"], bool):
+        raise ScenarioValidationError("governance.requireApproval must be boolean when provided")
+    approval_file = normalized.get("approvalFile")
+    if approval_file is not None and (not isinstance(approval_file, str) or not approval_file.strip()):
+        raise ScenarioValidationError("governance.approvalFile must be a non-empty string when provided")
+    approval_id = normalized.get("approvalId")
+    if approval_id is not None and (not isinstance(approval_id, str) or not approval_id.strip()):
+        raise ScenarioValidationError("governance.approvalId must be a non-empty string when provided")
+    return normalized
+
+
 def step_key(step: dict[str, Any], index: int) -> str:
+    explicit_key = step.get("key")
+    if isinstance(explicit_key, str) and explicit_key.strip():
+        return explicit_key.strip()
     explicit_id = step.get("id")
     if isinstance(explicit_id, str) and explicit_id.strip():
         return explicit_id.strip()
@@ -138,59 +167,45 @@ def _parse_steps(raw_steps: list[Any], *, label: str) -> list[ScenarioStep]:
     for index, raw_step in enumerate(raw_steps):
         if not isinstance(raw_step, dict):
             raise ScenarioValidationError(f"{label} step {index} must be a mapping")
+        if "name" not in raw_step or "type" not in raw_step:
+            raise ScenarioValidationError(f"{label} step {index} must include canonical fields 'name' and 'type'")
 
-        if {"name", "type"}.issubset(raw_step.keys()):
-            name = str(raw_step["name"])
-            step_type = str(raw_step["type"])
-            step_with = raw_step.get("with") or {}
-            if not isinstance(step_with, dict):
-                raise ScenarioValidationError(f"{label} step {index} with must be a mapping")
-            publish = raw_step.get("publish") or {}
-            if not isinstance(publish, dict) or not all(isinstance(v, str) for v in publish.values()):
-                raise ScenarioValidationError(f"{label} step {index} publish must be a mapping of string expressions")
-            retry, legacy = normalize_retry(raw_step)
-            depends_on_raw = raw_step.get("dependsOn", None)
-            if depends_on_raw is None:
-                depends_on = None
-            else:
-                depends_on = depends_on_raw
-            if depends_on is not None and (
-                not isinstance(depends_on, list) or not all(isinstance(v, str) and v.strip() for v in depends_on)
-            ):
-                raise ScenarioValidationError(f"{label} step {index} dependsOn must be an array of non-empty strings")
-            resources = raw_step.get("resources") or []
-            if not isinstance(resources, list) or not all(isinstance(v, str) and v.strip() for v in resources):
-                raise ScenarioValidationError(f"{label} step {index} resources must be an array of non-empty strings")
-            parsed_steps.append(
-                ScenarioStep(
-                    name=name,
-                    type=step_type,
-                    key=step_key(raw_step, index),
-                    with_={k: v for k, v in step_with.items() if k not in {"retries", "backoffMs"}},
-                    publish=publish,
-                    always=bool(raw_step.get("always", False)),
-                    retry=retry,
-                    legacy_retry_used=legacy,
-                    depends_on=None if depends_on is None else tuple(v.strip() for v in depends_on),
-                    resources=tuple(v.strip() for v in resources),
-                )
-            )
-            continue
+        name = str(raw_step["name"])
+        step_type = str(raw_step["type"])
+        if not name.strip():
+            raise ScenarioValidationError(f"{label} step {index} name must be a non-empty string")
+        if not step_type.strip():
+            raise ScenarioValidationError(f"{label} step {index} type must be a non-empty string")
 
-        # Legacy single action mapping.
-        if len(raw_step) != 1:
-            raise ScenarioValidationError(f"{label} step {index} must include name/type or single action mapping")
-        action, payload = next(iter(raw_step.items()))
-        if not isinstance(payload, dict):
-            raise ScenarioValidationError(f"{label} step {index} payload must be a mapping")
-        plugin = str(payload.get("via", "default"))
+        step_with = raw_step.get("with") or {}
+        if not isinstance(step_with, dict):
+            raise ScenarioValidationError(f"{label} step {index} with must be a mapping")
+        publish = raw_step.get("publish") or {}
+        if not isinstance(publish, dict) or not all(isinstance(v, str) for v in publish.values()):
+            raise ScenarioValidationError(f"{label} step {index} publish must be a mapping of string expressions")
+        retry, legacy = normalize_retry(raw_step)
+        depends_on = raw_step.get("dependsOn", None)
+        if depends_on is None:
+            depends_on = raw_step.get("depends_on", None)
+        if depends_on is not None and (
+            not isinstance(depends_on, list) or not all(isinstance(v, str) and v.strip() for v in depends_on)
+        ):
+            raise ScenarioValidationError(f"{label} step {index} dependsOn must be an array of non-empty strings")
+        resources = raw_step.get("resources") or []
+        if not isinstance(resources, list) or not all(isinstance(v, str) and v.strip() for v in resources):
+            raise ScenarioValidationError(f"{label} step {index} resources must be an array of non-empty strings")
         parsed_steps.append(
             ScenarioStep(
-                name=f"{plugin}.{action}",
-                type=f"legacy.{plugin}.{action}",
+                name=name,
+                type=step_type,
                 key=step_key(raw_step, index),
-                with_={k: v for k, v in payload.items() if k != "via"},
-                publish={},
+                with_={k: v for k, v in step_with.items() if k not in {"retries", "backoffMs"}},
+                publish=publish,
+                always=bool(raw_step.get("always", False)),
+                retry=retry,
+                legacy_retry_used=legacy,
+                depends_on=None if depends_on is None else tuple(v.strip() for v in depends_on),
+                resources=tuple(v.strip() for v in resources),
             )
         )
     return parsed_steps

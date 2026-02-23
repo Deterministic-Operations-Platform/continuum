@@ -1,13 +1,10 @@
-# Continuum Orchestrator
+# Continuum Orchestrator (v0.1)
 
-Continuum is a deterministic, plugin-based orchestration engine for high-stakes workflow scenarios (for example FedNow), with audit-ready evidence generated for every run (including failures).
+Continuum is a deterministic, plugin-based Python orchestration engine for high-stakes workflow scenarios (for example FedNow), with audit-ready evidence produced on every run, including failures.
 
-## v0.1 Deliverables
-- Minimal CLI (`continuum status`, `continuum run <scenario>`)
-- End-to-end deterministic run phases: preflight checks, lifecycle startup, transport/verification execution
-- Scenario loader for YAML and JSON
-- Evidence folder per run: `runs/<run-id>/scenario.*` + `summary.json` + `events.log` + `manifest.json`
-- Core interfaces for `Runtime`, `Plugin`, and `EvidenceCollector`
+“Continuum turns high-stakes engineering work into deterministic, replayable runs with audit-ready evidence—so banks can ship faster without increasing risk.”
+
+For v0.1, Python is the executable engine and source of truth. TS/Java implementations are parked under `experimental/` until they match the same runtime contract.
 
 ## Quick start
 ```bash
@@ -17,68 +14,78 @@ pip install -e .
 continuum status
 ```
 
-## Run a scenario
+## CLI commands
+
+`continuum status`
+- Runtime health/status and available commands/plugins.
+
+`continuum run <scenario> [--run-id ...]`
+- Execute a scenario deterministically and emit a run bundle under `runs/<run-id>/`.
+- Supports resume/selective execution, `--max-parallel`, RBAC actor/roles, and approval-file governance checks.
+
+`continuum golden-run [--scenario scenarios/fednow/rtpay-golden.yaml]`
+- One command for the FedNow/RTPay golden path: preflight, regression run, DB verification, log correlation, and publish-ready evidence.
+
+`continuum validate <scenario>`
+- Validate scenario contract, plugin availability, and template references without executing.
+
+`continuum plan <scenario> [--run-id ...]`
+- Build and print deterministic execution plan. If `--run-id` is given, writes `runs/<run-id>/plan.json`.
+
+`continuum publish --run-id <id> [--runs-dir runs] [--site-dir site] [--keep-runs 25]`
+- Publish a run bundle to static HTML/JSON under `site/`.
+
+## Canonical scenario schema (v0.1)
+
+```yaml
+name: string
+rail: string
+vars: {}               # optional
+services: {}           # optional
+steps:                 # required, non-empty
+  - name: string
+    type: string
+    key: string        # optional (or id)
+    id: string         # optional (alias for key)
+    with: {}           # optional input payload
+    always: false      # optional
+    dependsOn: []      # optional array of step keys
+    retry:             # optional
+      on: [exception]
+      maxAttempts: 1
+      backoff: fixed
+      baseDelayMs: 0
+      maxDelayMs: 0
+      jitter: 0.0
+    publish:           # optional map of vars from $.details.*
+      outputVar: $.details.some.field
+cleanup_steps:         # optional
+  - name: string
+    type: string
+    with: {}
+```
+
+## Evidence bundle contract
+
+Every run writes:
+- `runs/<run-id>/scenario.yaml`
+- `runs/<run-id>/context.json`
+- `runs/<run-id>/summary.json`
+- `runs/<run-id>/manifest.json`
+
+`events.log` may also be present depending on plugin/runtime behavior.
+- `events.log` is append-only with hash chaining (`prevHash` -> `hash`) for tamper-evident audit history.
+- `manifest.json` includes per-artifact checksums plus an artifact-set checksum, and `bundle_signature.json` + `manifest.sha256` provide immutable integrity evidence.
+
+## Run example
 ```bash
 continuum run examples/fednow-cam29-success.yaml --run-id local-001
-```
-
-Publish a run as a static site (for GitHub Pages or local browser viewing):
-```bash
 continuum publish --run-id local-001
-open site/index.html
+
+continuum golden-run --actor release.user --role release-manager
 ```
-
-If a plugin is missing, execution fails deterministically and still writes evidence to `runs/<run-id>/summary.json`.
-
-## FEDNOW-only hardening updates
-- `SimpleYamlParser` now ignores inline YAML comments in scalar values, including FEDNOW scenario metadata lines like `rail: fednow # payment rail`.
-- `SimpleYamlParser` now also handles UTF-8 BOM-prefixed files and list items that use short action blocks (`- send:` followed by indented fields).
-- `FileEvidenceCollector` now rejects blank artifact names and uses absolute, normalized path checks before writing evidence files.
-- Scope intentionally excludes Java CLI command behavior (`ContinuumCli.java`) unless required for correctness.
-- Reference guide: `docs/fednow-local-run-guide.md`
-
-## End-to-end execution model
-`continuum run` now enforces a deterministic sequence:
-1. Preflight
-   - Required plugins are available
-   - Run artifact directory is writable
-   - Scenario-defined checks (for example required environment variables) pass
-2. Lifecycle startup
-   - Services listed under `lifecycle.start` are started through lifecycle plugins
-3. Scenario execution
-   - Transport and verification steps run in order
-4. Evidence emission
-   - `summary.json`, `events.log`, and `manifest.json` are written for every run
-
-## Scenario format (v0.1)
-`steps` support either explicit plugin/action format:
-
-```yaml
-name: sample-explicit
-rail: fednow
-steps:
-  - plugin: default
-    action: ping
-    input:
-      message: hello
-```
-
-Or short action format:
-
-```yaml
-name: sample-short
-rail: fednow
-steps:
-  - ping:
-      via: default
-      message: hello
-```
-
-## Non-goals in v0.1
-- No UI or web server
-- No Spring Boot
-- Rail logic remains in scenario data + plugins, not in core runtime
 
 ## Additional guides
-- GitHub Packages starter: `docs/github-packages-get-started.md`
-- Scenario schema and production examples: `docs/scenarios.md`
+- Scenario schema details: `docs/scenarios.md`
+- FedNow local run guide: `docs/fednow-local-run-guide.md`
+- FedNow runbook: `docs/FEDNOW_RUNBOOK.md`

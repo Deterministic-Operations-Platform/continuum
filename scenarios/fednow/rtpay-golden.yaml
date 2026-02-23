@@ -1,0 +1,74 @@
+name: fednow-rtpay-golden
+rail: fednow
+vars:
+  issueKey: RTPAY-123
+governance:
+  allowedRoles:
+    - director
+    - release-manager
+
+steps:
+  - name: Preflight checklist
+    key: preflight_checklist
+    type: preflight.checklist
+    with:
+      commands: ["python"]
+
+  - name: Jira ticket ingestion
+    key: jira_ingest
+    type: jira.fetch
+    with:
+      issue:
+        labels: ["postman", "sql", "logs"]
+        components: ["payments"]
+
+  - name: Run regression plan
+    key: run_postman
+    type: postman.run
+    with:
+      collection: examples/postman/fednow-rtpay-regression.postman_collection.json
+      reporters: cli,json
+      allowMissingDependency: true
+
+  - name: Verify DB persistence
+    key: verify_sql
+    type: sql.verify
+    with:
+      database: ${runDir}/rtpay-demo.sqlite
+      seedStatements:
+        - create table if not exists ledger(id integer primary key, trace_id text, status text)
+        - "insert into ledger(trace_id, status) values ('${traceId}', 'SETTLED')"
+      queries:
+        - name: persisted
+          sql: select * from ledger where trace_id = ? and status = ?
+          params: ["${traceId}", "SETTLED"]
+      assert:
+        - query: persisted
+          op: gte
+          value: 1
+
+  - name: Collect correlated logs
+    key: collect_logs
+    type: logs.collect
+    with:
+      sources:
+        - name: run-evidence
+          type: dir_glob
+          glob: ${runDir}/evidence/**/*.json
+      match:
+        include: ["${traceId}", "error", "exception"]
+      maxLines: 500
+
+  - name: Publish Jira comment
+    key: jira_comment
+    type: jira.comment
+    with:
+      body: "Continuum golden run ${runId} completed. Trace ${traceId}."
+
+  - name: Attach evidence bundle
+    key: jira_attach
+    type: jira.attach
+    with:
+      globs:
+        - evidence/**/*.json
+      maxFiles: 25

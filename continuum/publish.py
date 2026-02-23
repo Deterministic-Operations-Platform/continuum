@@ -8,6 +8,8 @@ import shutil
 from typing import Any
 import re
 
+from continuum.reporting import ensure_report
+
 
 _REDACTION_PATTERNS = [
     (r"(?i)(token\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
@@ -40,6 +42,7 @@ def publish_run(*, run_id: str, runs_dir: Path = Path("runs"), site_dir: Path = 
     if target_dir.exists():
         shutil.rmtree(target_dir)
     shutil.copytree(source_dir, target_dir)
+    ensure_report(target_dir)
     _redact_tree(target_dir)
 
     _prune_runs(site_dir / "runs", keep_runs)
@@ -66,6 +69,8 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
         context = _read_json(context_path) if context_path.exists() else {}
         manifest_path = summary_path.parent / "manifest.json"
         manifest = _read_json(manifest_path) if manifest_path.exists() else {}
+        if not (summary_path.parent / "report.html").is_file():
+            ensure_report(summary_path.parent)
 
         status = str(summary.get("status") or "unknown")
         started = str(summary.get("startedAt") or summary.get("started_at") or "")

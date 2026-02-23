@@ -1,22 +1,48 @@
 import argparse
 import json
 from pathlib import Path
+import tempfile
+from typing import Any
 
 try:
     from rich import print as rich_print
 except ModuleNotFoundError:
     rich_print = print
 
-from continuum import ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
+from continuum import __version__, ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
 from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
+
+
+def _status_payload() -> dict[str, Any]:
+    runs_dir = Path("runs")
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    writable = False
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=runs_dir, prefix=".health-", delete=True) as handle:
+            handle.write("ok")
+            handle.flush()
+        writable = True
+    except OSError:
+        writable = False
+
+    return {
+        "status": "ready" if writable else "degraded",
+        "version": __version__,
+        "cwd": str(Path.cwd()),
+        "runs_dir": str(runs_dir.resolve()),
+        "runs_dir_writable": writable,
+        "commands": ["status", "run", "golden-run", "validate", "plan", "publish"],
+        "plugins": sorted(PluginRegistry().available_plugin_names()),
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="continuum", description="Continuum deterministic orchestrator")
     sub = parser.add_subparsers(dest="cmd")
 
-    sub.add_parser("status", help="Show current status / health")
+    status = sub.add_parser("status", help="Show current status / health")
+    status.add_argument("--json", dest="as_json", action="store_true", help="Output health payload as JSON")
 
     run = sub.add_parser("run", help="Run a scenario from a YAML/JSON file")
     run.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -33,6 +59,20 @@ def main() -> None:
     run.add_argument("--stop-services", dest="stop_services", action="store_true", help="Stop scenario services at end of run")
     run.add_argument("--reuse-sessions", dest="reuse_sessions", action="store_true", default=True, help="Allow service session reuse (default)")
     run.add_argument("--no-reuse-sessions", dest="reuse_sessions", action="store_false", help="Disable service session reuse")
+    run.add_argument("--max-parallel", dest="max_parallel", type=int, default=1, help="Maximum parallel step workers")
+    run.add_argument("--actor", dest="actor", default=None, help="Actor identity for RBAC checks")
+    run.add_argument("--role", dest="roles", action="append", default=[], help="Actor role (can be repeated)")
+    run.add_argument("--approval-file", dest="approval_file", default=None, help="Path to approval file for governance checks")
+
+    golden = sub.add_parser("golden-run", help="Run the FedNow/RTPay golden scenario and publish report")
+    golden.add_argument("--scenario", dest="scenario", default="scenarios/fednow/rtpay-golden.yaml", help="Golden scenario path")
+    golden.add_argument("--run-id", dest="run_id", default=None, help="Optional run id for deterministic replay")
+    golden.add_argument("--max-parallel", dest="max_parallel", type=int, default=4, help="Maximum parallel step workers")
+    golden.add_argument("--actor", dest="actor", default=None, help="Actor identity for RBAC checks")
+    golden.add_argument("--role", dest="roles", action="append", default=["release-manager"], help="Actor role (can be repeated)")
+    golden.add_argument("--approval-file", dest="approval_file", default=None, help="Path to approval file for governance checks")
+    golden.add_argument("--no-publish", dest="no_publish", action="store_true", help="Run scenario without publishing static report")
+    golden.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
 
     validate = sub.add_parser("validate", help="Validate scenario without executing")
     validate.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -49,7 +89,16 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.cmd == "status":
-        rich_print("[bold green]Continuum[/bold green] deterministic runtime ready")
+        payload = _status_payload()
+        if args.as_json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return
+        style = "bold green" if payload["status"] == "ready" else "bold yellow"
+        rich_print(f"[{style}]Continuum[/{style}] deterministic runtime ready")
+        rich_print(f"Version: [bold]{payload['version']}[/bold]")
+        rich_print(f"Runs dir: [bold]{payload['runs_dir']}[/bold] (writable={payload['runs_dir_writable']})")
+        rich_print(f"Commands: [bold]{', '.join(payload['commands'])}[/bold]")
+        rich_print(f"Plugins ({len(payload['plugins'])}): [bold]{', '.join(payload['plugins'])}[/bold]")
         return
 
     if args.cmd == "run":
@@ -74,6 +123,10 @@ def main() -> None:
                 no_cleanup=args.no_cleanup,
                 rerun_selectors=tuple(args.rerun_selectors),
                 from_failure=args.from_failure,
+                max_parallel=int(args.max_parallel),
+                actor=args.actor,
+                actor_roles=tuple(args.roles),
+                approval_file=args.approval_file,
             )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             rich_print(
@@ -89,16 +142,50 @@ def main() -> None:
             raise SystemExit(1) from err
         return
 
+    if args.cmd == "golden-run":
+        scenario_path = Path(args.scenario)
+        try:
+            scenario_text = scenario_path.read_text(encoding="utf-8")
+            scenario = load_scenario(scenario_path)
+            runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
+            summary = runtime.execute(
+                scenario=scenario,
+                scenario_source=scenario_path,
+                scenario_text=scenario_text,
+                run_id=args.run_id,
+                max_parallel=int(args.max_parallel),
+                actor=args.actor,
+                actor_roles=tuple(args.roles),
+                approval_file=args.approval_file,
+            )
+            status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
+            rich_print(
+                f"Golden run [bold]{summary['run_id']}[/bold] finished with "
+                f"[{status_style}]{summary['status']}[/{status_style}]"
+            )
+            rich_print(f"Evidence: [bold]{summary['evidence_dir']}[/bold]")
+            if not args.no_publish:
+                target = publish_run(run_id=summary["run_id"], runs_dir=Path("runs"), site_dir=Path(args.site_dir), keep_runs=25)
+                rich_print(f"[green]Published[/green] golden run to [bold]{target}[/bold]")
+                rich_print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
+            if summary["failure"]:
+                rich_print(f"Failure: [bold red]{summary['failure']['message']}[/bold red]")
+                raise SystemExit(1)
+        except ContinuumError as err:
+            rich_print(f"[bold red]Execution error[/bold red]: {err} ({err.failure_class.value})")
+            raise SystemExit(1) from err
+        return
+
     if args.cmd == "validate":
         scenario = load_scenario(args.scenario)
         errors, warnings = validate_scenario(scenario, plugin_registry=PluginRegistry())
         for warning in warnings:
-            print(f"[yellow]WARN[/yellow] {warning}")
+            rich_print(f"[yellow]WARN[/yellow] {warning}")
         if errors:
             for error in errors:
-                print(f"[red]ERROR[/red] {error}")
+                rich_print(f"[red]ERROR[/red] {error}")
             raise SystemExit(1)
-        print("[green]OK[/green] scenario validates")
+        rich_print("[green]OK[/green] scenario validates")
         return
 
     if args.cmd == "plan":
@@ -111,7 +198,7 @@ def main() -> None:
         if args.run_id:
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "plan.json").write_text(json.dumps(plan_payload, indent=2, sort_keys=True), encoding="utf-8")
-            print(f"[green]Wrote[/green] {run_dir / 'plan.json'}")
+            rich_print(f"[green]Wrote[/green] {run_dir / 'plan.json'}")
         return
 
     if args.cmd == "publish":
@@ -121,8 +208,8 @@ def main() -> None:
             site_dir=Path(args.site_dir),
             keep_runs=args.keep_runs,
         )
-        print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
-        print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
+        rich_print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
+        rich_print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
         return
 
     parser.print_help()
