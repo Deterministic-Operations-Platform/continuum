@@ -22,6 +22,12 @@ continuum status
 continuum run examples/fednow-cam29-success.yaml --run-id local-001
 ```
 
+Publish a run as a static site (for GitHub Pages or local browser viewing):
+```bash
+continuum publish --run-id local-001
+open site/index.html
+```
+
 If a plugin is missing, execution fails deterministically and still writes evidence to `runs/<run-id>/summary.json`.
 
 ## FEDNOW-only hardening updates
@@ -75,3 +81,4 @@ steps:
 
 ## Additional guides
 - GitHub Packages starter: `docs/github-packages-get-started.md`
+- Scenario schema and production examples: `docs/scenarios.md`

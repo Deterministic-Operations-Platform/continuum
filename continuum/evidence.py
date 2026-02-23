@@ -2,84 +2,80 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
-
-
-@dataclass(slots=True)
-class StepRecord:
-    index: int
-    plugin: str
-    action: str
-    status: str
-    phase: str = "execution"
-    output: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
+import hashlib
+import json
+import platform
+import subprocess
 
 
 class EvidenceCollector:
+    def step_dir(self, run_dir: Path, step_index: int, step_name: str) -> Path:
+        safe_name = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in step_name)
+        return run_dir / "evidence" / f"{step_index + 1:02d}-{safe_name}"
+
+    def attempt_dir(self, run_dir: Path, step_index: int, step_name: str, attempt: int) -> Path:
+        return self.step_dir(run_dir, step_index, step_name) / f"attempt-{attempt:02d}"
+
+    def write_text(self, path: Path, content: str) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return str(path)
+
+    def write_json(self, path: Path, payload: Any) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        return str(path)
+
     def write_run_bundle(
         self,
         *,
         run_id: str,
         scenario_source: Path,
+        scenario_text: str,
+        context_payload: dict[str, Any],
         summary: dict[str, Any],
+        manifest_payload: dict[str, Any] | None = None,
     ) -> Path:
         run_dir = Path("runs") / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "scenario.yaml").write_text(scenario_text, encoding="utf-8")
+        (run_dir / "context.json").write_text(json.dumps(context_payload, indent=2, sort_keys=True), encoding="utf-8")
+        (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
 
-        scenario_copy = run_dir / f"scenario{scenario_source.suffix.lower()}"
-        scenario_copy.write_text(scenario_source.read_text(encoding="utf-8"), encoding="utf-8")
-
-        payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            **summary,
-        }
-
-        summary_path = run_dir / "summary.json"
-        summary_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-        events_path = run_dir / "events.log"
-        events_path.write_text(self._render_events_log(summary), encoding="utf-8")
-
-        manifest_payload = {
+        manifest_data: dict[str, Any] = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "run_id": run_id,
             "scenario_source": str(scenario_source),
+            "tooling": {
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+                "newman": self._command_version(["newman", "--version"]),
+            },
             "artifacts": [
                 self._artifact_metadata(path)
-                for path in sorted((scenario_copy, summary_path, events_path), key=lambda item: item.name)
+                for path in sorted(run_dir.rglob("*"))
+                if path.is_file() and path.name != "manifest.json"
             ],
         }
-        (run_dir / "manifest.json").write_text(
-            json.dumps(manifest_payload, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        return run_dir
+        if manifest_payload:
+            manifest_data.update(manifest_payload)
 
-    def _render_events_log(self, summary: dict[str, Any]) -> str:
-        lines = [f"run_id={summary['run_id']} status={summary['status']}"]
-        for step in summary.get("steps", []):
-            message = (
-                f"step={step['index']} plugin={step['plugin']} action={step['action']} "
-                f"status={step['status']}"
-            )
-            if step.get("error"):
-                message = f"{message} error={step['error']}"
-            lines.append(message)
-        if summary.get("failure"):
-            lines.append(
-                f"failure_class={summary['failure']['class']} message={summary['failure']['message']}"
-            )
-        return "\n".join(lines) + "\n"
+        (run_dir / "manifest.json").write_text(json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8")
+        return run_dir
 
     def _artifact_metadata(self, path: Path) -> dict[str, Any]:
         file_bytes = path.read_bytes()
-        return {
-            "name": path.name,
-            "size": len(file_bytes),
-            "sha256": hashlib.sha256(file_bytes).hexdigest(),
-        }
+        return {"path": str(path), "size": len(file_bytes), "sha256": hashlib.sha256(file_bytes).hexdigest()}
+
+    def _command_version(self, command: list[str]) -> str | None:
+        try:
+            proc = subprocess.run(command, capture_output=True, text=True, check=False)
+        except Exception:
+            return None
+        if proc.returncode != 0:
+            return None
+        text = (proc.stdout or proc.stderr).strip()
+        return text.splitlines()[0] if text else None

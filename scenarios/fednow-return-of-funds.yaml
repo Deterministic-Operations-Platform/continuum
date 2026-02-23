@@ -1,0 +1,65 @@
+name: fednow-return-of-funds
+rail: fednow
+vars:
+  issueKey: PGQT-5417
+
+steps:
+  - name: Ensure AppLauncher session
+    id: ensure_appl
+    type: applauncher.ensure
+    with:
+      session: fednow-rof
+      command: python
+      args: ["-m", "http.server", "8080"]
+      cwd: .
+      healthUrl: http://localhost:8080
+      verifyTimeoutSec: 10
+
+  - name: Run Postman ROF
+    type: postman.run
+    id: run_postman
+    with:
+      collection: postman/ROF.collection.json
+      environment: postman/local.environment.json
+      envVar:
+        baseUrl: http://localhost:8080
+      iterations: 1
+
+  - name: Verify Mongo results
+    type: mongo.verify
+    with:
+      uri: ${env.MONGO_URI}
+      db: rtpay
+      queries:
+        - name: rofRecords
+          collection: returnOfFunds
+          filter:
+            runId: ${runId}
+          limit: 50
+      assert:
+        - query: rofRecords
+          op: gte
+          value: 1
+
+  - name: Fetch Jira ticket
+    type: jira.fetch
+
+  - name: Comment Jira with run summary
+    type: jira.comment
+    with:
+      body: Continuum run ${runId} finished. Evidence is attached (newman reports + mongo assertions).
+
+  - name: Attach evidence to Jira
+    type: jira.attach
+    with:
+      globs:
+        - ${runDir}/evidence/**/newman-report.html
+        - ${runDir}/evidence/**/assertions.json
+      includeRunBundle: true
+      maxFiles: 10
+
+  - name: Stop AppLauncher session
+    type: applauncher.session.stop
+    always: true
+    with:
+      session: fednow-rof

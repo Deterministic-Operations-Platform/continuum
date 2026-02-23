@@ -1,0 +1,58 @@
+name: fednow-rtpay-golden
+rail: fednow
+vars:
+  issueKey: RTPAY-123
+
+steps:
+  - name: ensure-applauncher
+    type: applauncher.ensure
+    with:
+      session: fednow-rtpay
+      command: python
+      args: ["-m", "http.server", "8077"]
+      healthUrl: http://127.0.0.1:8077
+      verifyTimeoutSec: 30
+    publish:
+      appPid: $.details.pid
+
+  - name: run-collection
+    type: postman.run
+    with:
+      collection: collections/fednow-camt29.postman_collection.json
+      retries: 1
+      backoffMs: 2000
+
+  - name: verify-database
+    type: mongo.verify
+    with:
+      uri: ${env.MONGO_URI}
+      db: payments
+      queries:
+        - name: inboundMessages
+          collection: inbound_requests
+          filter:
+            requestRef: CAMT29-001
+      assert:
+        - query: inboundMessages
+          op: gte
+          value: 1
+
+  - name: jira-comment
+    type: jira.comment
+    with:
+      issueKey: ${issueKey}
+      body: "Run ${runId} completed with AppLauncher PID ${appPid}."
+
+  - name: jira-attach-evidence
+    type: jira.attach
+    with:
+      issueKey: ${issueKey}
+      files:
+        - ${runDir}/evidence/**/newman-report.html
+        - ${runDir}/summary.json
+
+cleanup_steps:
+  - name: stop-applauncher
+    type: applauncher.session.stop
+    with:
+      session: fednow-rtpay
