@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, Any
+import os
 
 from continuum.errors import PluginResolutionError, StepExecutionError
 
@@ -30,6 +32,66 @@ class DefaultPlugin:
         if not action:
             raise StepExecutionError("Action cannot be empty")
         return StepResult(status="ok", output={"action": action, "accepted": step_input})
+
+
+class LifecycleAppLauncherPlugin:
+    """Deterministic lifecycle simulator for AppLauncher startup."""
+
+    name = "lifecycle-applauncher"
+
+    def execute(self, action: str, step_input: dict[str, Any], context: dict[str, Any]) -> StepResult:
+        if action != "start":
+            raise StepExecutionError(f"Unsupported action '{action}' for {self.name}")
+
+        ready_env = str(os.getenv("CONTINUUM_APPLAUNCHER_READY", "true")).strip().lower()
+        if ready_env not in {"true", "1", "yes"}:
+            raise StepExecutionError("AppLauncher readiness check failed (set CONTINUUM_APPLAUNCHER_READY=true)")
+
+        return StepResult(
+            status="ok",
+            output={
+                "service": "applauncher",
+                "started": True,
+            },
+        )
+
+
+class PreflightPlugin:
+    """Deterministic preflight checks for environment readiness."""
+
+    name = "preflight"
+
+    def execute(self, action: str, step_input: dict[str, Any], context: dict[str, Any]) -> StepResult:
+        if action == "plugins":
+            required_plugins = step_input.get("plugins", [])
+            if not isinstance(required_plugins, list):
+                raise StepExecutionError("preflight.plugins expects plugins as an array")
+            missing = [name for name in required_plugins if name not in context.get("available_plugins", set())]
+            if missing:
+                raise StepExecutionError(f"Missing required plugins: {', '.join(sorted(missing))}")
+            return StepResult(status="ok", output={"check": "plugins", "missing": []})
+
+        if action == "artifacts-dir":
+            path_value = step_input.get("path")
+            if not isinstance(path_value, str) or not path_value.strip():
+                raise StepExecutionError("preflight.artifacts-dir requires a non-empty path")
+            path = Path(path_value)
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".continuum.write.test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return StepResult(status="ok", output={"check": "artifacts-dir", "path": str(path)})
+
+        if action == "env":
+            name = step_input.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise StepExecutionError("preflight.env requires a non-empty name")
+            value = os.getenv(name)
+            if value is None or not str(value).strip():
+                raise StepExecutionError(f"Required env var is missing: {name}")
+            return StepResult(status="ok", output={"check": "env", "name": name})
+
+        raise StepExecutionError(f"Unsupported action '{action}' for {self.name}")
 
 
 class TransportPostmanPlugin:
@@ -84,7 +146,13 @@ class VerifyMongoPlugin:
 
 class PluginRegistry:
     def __init__(self, plugins: list[Plugin] | None = None):
-        initial_plugins = plugins or [DefaultPlugin(), TransportPostmanPlugin(), VerifyMongoPlugin()]
+        initial_plugins = plugins or [
+            DefaultPlugin(),
+            PreflightPlugin(),
+            LifecycleAppLauncherPlugin(),
+            TransportPostmanPlugin(),
+            VerifyMongoPlugin(),
+        ]
         self._plugins = {plugin.name: plugin for plugin in initial_plugins}
 
     def resolve(self, name: str) -> Plugin:
@@ -92,3 +160,6 @@ class PluginRegistry:
         if plugin is None:
             raise PluginResolutionError(f"No plugin registered for '{name}'")
         return plugin
+
+    def available_plugin_names(self) -> set[str]:
+        return set(self._plugins.keys())

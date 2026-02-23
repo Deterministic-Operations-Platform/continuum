@@ -16,6 +16,7 @@ class StepRecord:
     plugin: str
     action: str
     status: str
+    phase: str = "execution"
     output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 

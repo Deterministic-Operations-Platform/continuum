@@ -1,6 +1,10 @@
 name: fednow-cam29-success
 rail: fednow
 
+preflight:
+  - env:
+      name: PATH
+
 lifecycle:
   start:
     - applauncher
