@@ -63,8 +63,10 @@ class DeterministicRuntime:
         started_at = datetime.now(timezone.utc)
         summary_steps: list[dict[str, Any]] = []
         failure: dict[str, str] | None = None
+        failed_at: int | None = None
 
-        for index, step in enumerate(scenario.steps):
+        def run_step(index: int) -> dict[str, str] | None:
+            step = scenario.steps[index]
             plugin = self.plugin_registry.resolve(step.type)
             step_with = render_templates(step.with_, ctx=context)
             step_started = datetime.now(timezone.utc)
@@ -75,6 +77,7 @@ class DeterministicRuntime:
                         "index": index,
                         "name": step.name,
                         "type": step.type,
+                        "always": step.always,
                         "ok": result.ok,
                         "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
                         "details": result.details,
@@ -82,37 +85,48 @@ class DeterministicRuntime:
                     }
                 )
                 if not result.ok:
-                    failure = {
+                    return {
                         "message": f"Step returned unsuccessful status: {step.name}",
-                        "class": FailureClass.EXECUTION.value,
+                        "class": FailureClass.DATA.value,
                     }
-                    break
+                return None
             except ContinuumError as err:
-                failure = {"message": str(err), "class": err.failure_class.value}
                 summary_steps.append(
                     {
                         "index": index,
                         "name": step.name,
                         "type": step.type,
+                        "always": step.always,
                         "ok": False,
                         "error": str(err),
                         "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
                     }
                 )
-                break
+                return {"message": str(err), "class": err.failure_class.value}
             except Exception as err:  # noqa: BLE001
-                failure = {"message": str(err), "class": FailureClass.INFRA.value}
                 summary_steps.append(
                     {
                         "index": index,
                         "name": step.name,
                         "type": step.type,
+                        "always": step.always,
                         "ok": False,
                         "error": str(err),
                         "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
                     }
                 )
+                return {"message": str(err), "class": FailureClass.INFRA.value}
+
+        for index, _step in enumerate(scenario.steps):
+            failure = run_step(index)
+            if failure is not None:
+                failed_at = index
                 break
+
+        if failed_at is not None:
+            for index in range(failed_at + 1, len(scenario.steps)):
+                if scenario.steps[index].always:
+                    run_step(index)
 
         summary = {
             "run_id": resolved_run_id,

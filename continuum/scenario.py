@@ -17,6 +17,7 @@ class ScenarioStep:
     name: str
     type: str
     with_: dict[str, Any]
+    always: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +49,14 @@ class Scenario:
                 step_with = raw_step.get("with", {})
                 if not isinstance(step_with, dict):
                     raise ScenarioValidationError(f"Step {index} with must be a mapping")
-                parsed_steps.append(ScenarioStep(name=name, type=step_type, with_=step_with))
+                parsed_steps.append(
+                    ScenarioStep(
+                        name=name,
+                        type=step_type,
+                        with_=step_with,
+                        always=bool(raw_step.get("always", False)),
+                    )
+                )
                 continue
 
             # Backward-compat support for legacy plugin/action schema.
@@ -59,7 +67,12 @@ class Scenario:
                 if not isinstance(step_input, dict):
                     raise ScenarioValidationError(f"Step {index} input must be a mapping")
                 parsed_steps.append(
-                    ScenarioStep(name=f"{plugin}.{action}", type=f"legacy.{plugin}.{action}", with_=step_input)
+                    ScenarioStep(
+                        name=f"{plugin}.{action}",
+                        type=f"legacy.{plugin}.{action}",
+                        with_=step_input,
+                        always=False,
+                    )
                 )
                 continue
 
@@ -73,7 +86,12 @@ class Scenario:
             plugin = str(payload.get("via", "default"))
             step_with = {k: v for k, v in payload.items() if k != "via"}
             parsed_steps.append(
-                ScenarioStep(name=f"{plugin}.{action}", type=f"legacy.{plugin}.{action}", with_=step_with)
+                ScenarioStep(
+                    name=f"{plugin}.{action}",
+                    type=f"legacy.{plugin}.{action}",
+                    with_=step_with,
+                    always=False,
+                )
             )
 
         raw_vars = data.get("vars", {})

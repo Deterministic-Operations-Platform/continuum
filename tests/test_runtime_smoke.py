@@ -58,6 +58,61 @@ class ContinuumSmokeTests(unittest.TestCase):
         self.assertEqual(summary["run_id"], run_id)
         self.assertEqual(summary["status"], "succeeded")
 
+    def test_run_executes_always_steps_after_failure(self) -> None:
+        run_id = "test-always-run"
+        run_dir = REPO_ROOT / "runs" / run_id
+        scenario_path = REPO_ROOT / "runs" / "test-always-scenario.yaml"
+
+        self.addCleanup(lambda: shutil.rmtree(run_dir, ignore_errors=True))
+        self.addCleanup(lambda: scenario_path.unlink(missing_ok=True))
+
+        scenario_path.write_text(
+            """name: always-step-smoke
+rail: test
+steps:
+  - name: Start AppLauncher
+    type: applauncher.start
+    with:
+      command: python
+      args: ["-m", "http.server", "8091"]
+      cwd: .
+  - name: Force health failure
+    type: http.health
+    with:
+      url: http://localhost:1
+      timeoutSec: 1
+  - name: Stop AppLauncher
+    type: applauncher.stop
+    always: true
+""",
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "continuum",
+                "run",
+                str(scenario_path.relative_to(REPO_ROOT)),
+                "--run-id",
+                run_id,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0, "Run should fail due to health check")
+
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(len(summary["steps"]), 3)
+        self.assertEqual(summary["steps"][2]["name"], "Stop AppLauncher")
+        self.assertTrue(summary["steps"][2]["ok"])
+        self.assertTrue((run_dir / "evidence" / "03-Stop_AppLauncher").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

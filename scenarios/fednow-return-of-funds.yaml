@@ -59,3 +59,4 @@ steps:
 
   - name: Stop AppLauncher
     type: applauncher.stop
+    always: true
