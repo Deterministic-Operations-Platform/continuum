@@ -5,6 +5,7 @@ from pathlib import Path
 from rich import print
 
 from continuum import ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
+from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
 
 
@@ -36,6 +37,12 @@ def main() -> None:
     plan = sub.add_parser("plan", help="Generate deterministic execution plan without executing")
     plan.add_argument("scenario", help="Path to scenario YAML/JSON")
     plan.add_argument("--run-id", dest="run_id", default=None, help="Run id used for deterministic plan output")
+
+    publish = sub.add_parser("publish", help="Publish a run bundle to a static site folder")
+    publish.add_argument("--run-id", dest="run_id", required=True, help="Run id to publish from runs/<run-id>")
+    publish.add_argument("--runs-dir", dest="runs_dir", default="runs", help="Directory containing run bundles")
+    publish.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
+    publish.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="Number of published runs to keep")
 
     args = parser.parse_args()
     if args.cmd == "status":
@@ -99,6 +106,17 @@ def main() -> None:
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "plan.json").write_text(json.dumps(plan_payload, indent=2, sort_keys=True), encoding="utf-8")
             print(f"[green]Wrote[/green] {run_dir / 'plan.json'}")
+        return
+
+    if args.cmd == "publish":
+        target = publish_run(
+            run_id=args.run_id,
+            runs_dir=Path(args.runs_dir),
+            site_dir=Path(args.site_dir),
+            keep_runs=args.keep_runs,
+        )
+        print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
+        print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
         return
 
     parser.print_help()

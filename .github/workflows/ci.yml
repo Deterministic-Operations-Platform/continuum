@@ -4,12 +4,91 @@ on:
   pull_request:
 
 jobs:
-  lint:
+  continuum:
     runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.meta.outputs.run_id }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: python -m pip install -e .
-      - run: python -m continuum status
+      - id: meta
+        run: echo "run_id=ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Run continuum scenario
+        run: |
+          python -m continuum run examples/fednow-cam29-success.yaml --run-id "${{ steps.meta.outputs.run_id }}"
+      - name: Upload run bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: continuum-runs-${{ steps.meta.outputs.run_id }}
+          path: runs/${{ steps.meta.outputs.run_id }}
+
+  pages:
+    needs: continuum
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      checks: write
+      pull-requests: write
+    env:
+      RUN_ID: ${{ needs.continuum.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e .
+
+      - name: Download run bundle artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: continuum-runs-${{ env.RUN_ID }}
+          path: runs/${{ env.RUN_ID }}
+
+      - name: Build site
+        run: |
+          python -m continuum publish --run-id "${RUN_ID}" --runs-dir runs --site-dir site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Add Check summary link
+        run: |
+          echo "### Continuum E2E (clickable report)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Run ID: \\`${RUN_ID}\\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Report: ${{ steps.deploy.outputs.page_url }}runs/${RUN_ID}/report.html" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment PR with clickable report link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = process.env.RUN_ID;
+            const pageUrl = "${{ steps.deploy.outputs.page_url }}";
+            const reportUrl = `${pageUrl}runs/${runId}/report.html`;
+            const body =
+`<!-- continuum-autopilot -->
+### Continuum E2E (clickable report)
+- Run ID: \`${runId}\`
+- Report: ${reportUrl}`;
+
+            const {owner, repo} = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.rest.issues.listComments({owner, repo, issue_number, per_page: 100});
+            const tag = "<!-- continuum-autopilot -->";
+            const existing = comments.data.find(c => c.body && c.body.includes(tag));
+            if (existing) await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body});
+            else await github.rest.issues.createComment({owner, repo, issue_number, body});
