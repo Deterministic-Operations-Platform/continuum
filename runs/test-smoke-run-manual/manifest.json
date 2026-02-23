@@ -1,0 +1,22 @@
+{
+  "artifacts": [
+    {
+      "name": "events.log",
+      "sha256": "6112d8e97801afc3c10b61befb9019acb8c9f23eccee9157fedcdcc99add4f19",
+      "size": 366
+    },
+    {
+      "name": "scenario.yaml",
+      "sha256": "c5d9449da521b81a08fd64a2433c8fe7f4baeb73b6817e3dba4bb7ed10a925df",
+      "size": 365
+    },
+    {
+      "name": "summary.json",
+      "sha256": "23c951e163208836a877df896d60642c90e5a0b955941ba4dc9d8c2f84ac4ba5",
+      "size": 2032
+    }
+  ],
+  "generated_at": "2026-02-23T05:27:52.020964+00:00",
+  "run_id": "test-smoke-run-manual",
+  "scenario_source": "examples\\fednow-cam29-success.yaml"
+}

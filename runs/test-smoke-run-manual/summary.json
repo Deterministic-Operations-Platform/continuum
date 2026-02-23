@@ -1,0 +1,93 @@
+{
+  "evidence_dir": "runs\\test-smoke-run-manual",
+  "failure": null,
+  "generated_at": "2026-02-23T05:27:52.019442+00:00",
+  "run_id": "test-smoke-run-manual",
+  "scenario": {
+    "lifecycle_start": [
+      "applauncher"
+    ],
+    "name": "fednow-cam29-success",
+    "rail": "fednow",
+    "steps": 2
+  },
+  "status": "succeeded",
+  "steps": [
+    {
+      "action": "plugins",
+      "error": null,
+      "index": 0,
+      "output": {
+        "check": "plugins",
+        "missing": []
+      },
+      "phase": "preflight",
+      "plugin": "preflight",
+      "status": "ok"
+    },
+    {
+      "action": "artifacts-dir",
+      "error": null,
+      "index": 1,
+      "output": {
+        "check": "artifacts-dir",
+        "path": "runs\\test-smoke-run-manual"
+      },
+      "phase": "preflight",
+      "plugin": "preflight",
+      "status": "ok"
+    },
+    {
+      "action": "env",
+      "error": null,
+      "index": 2,
+      "output": {
+        "check": "env",
+        "name": "PATH"
+      },
+      "phase": "preflight",
+      "plugin": "preflight",
+      "status": "ok"
+    },
+    {
+      "action": "start",
+      "error": null,
+      "index": 3,
+      "output": {
+        "service": "applauncher",
+        "started": true
+      },
+      "phase": "lifecycle",
+      "plugin": "lifecycle-applauncher",
+      "status": "ok"
+    },
+    {
+      "action": "send",
+      "error": null,
+      "index": 4,
+      "output": {
+        "requestRef": "cam29-valid",
+        "status": "accepted",
+        "transport": "simulated"
+      },
+      "phase": "execution",
+      "plugin": "transport-postman",
+      "status": "ok"
+    },
+    {
+      "action": "verify",
+      "error": null,
+      "index": 5,
+      "output": {
+        "collection": "inbound_requests",
+        "expected": {
+          "addMeToMessage": true
+        },
+        "verified": true
+      },
+      "phase": "execution",
+      "plugin": "verify-mongo",
+      "status": "ok"
+    }
+  ]
+}
