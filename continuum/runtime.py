@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import os
 import shutil
+import signal
 from time import sleep
 from typing import Any, Protocol
 import uuid
 
 from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError
 from continuum.evidence import EvidenceCollector
-from continuum.plugins import PluginRegistry, find_unknown_templates, render_templates, resolve_attach_files
+from continuum.plugins import (
+    PluginRegistry,
+    ensure_applauncher_session,
+    find_unknown_templates,
+    render_templates,
+    resolve_attach_files,
+)
 from continuum.scenario import Scenario
 
 
@@ -74,7 +82,18 @@ class DeterministicRuntime:
         self.plugin_registry = plugin_registry
         self.evidence_collector = evidence_collector
 
-    def execute(self, scenario: Scenario, scenario_source: Path, scenario_text: str, run_id: str | None = None) -> dict[str, Any]:
+    def execute(
+        self,
+        scenario: Scenario,
+        scenario_source: Path,
+        scenario_text: str,
+        run_id: str | None = None,
+        *,
+        no_services: bool = False,
+        stop_services: bool = False,
+        reuse_sessions: bool = True,
+        resume_run_id: str | None = None,
+    ) -> dict[str, Any]:
         resolved_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         run_dir = Path("runs") / resolved_run_id
         warnings = [
@@ -93,11 +112,19 @@ class DeterministicRuntime:
         context: dict[str, Any] = {
             "run_id": resolved_run_id,
             "run_dir": str(run_dir),
-            "vars": dict(scenario.vars),
+            "vars": vars_payload,
             "env": dict(os.environ),
             "step_dir": lambda i, n: str(self.evidence_collector.step_dir(run_dir, i, n)),
             "write_json": lambda step_path, filename, payload: self.evidence_collector.write_json(Path(step_path) / filename, payload),
         }
+
+        service_states = self._ensure_services(
+            scenario=scenario,
+            context=context,
+            run_dir=run_dir,
+            no_services=no_services,
+            reuse_sessions=reuse_sessions,
+        )
 
         summary_steps: list[dict[str, Any]] = []
         cleanup_steps: list[dict[str, Any]] = []
@@ -123,6 +150,12 @@ class DeterministicRuntime:
             cleanup_summary = self._run_one(step=step, step_index=index, context=context, phase="cleanup")
             cleanup_steps.append(cleanup_summary)
 
+        service_cleanup = self._stop_services(
+            scenario=scenario,
+            service_states=service_states,
+            stop_services=stop_services,
+        )
+
         summary = {
             "run_id": resolved_run_id,
             "resumedFrom": resume_id,
@@ -130,6 +163,8 @@ class DeterministicRuntime:
             "status": "failed" if failure else "succeeded",
             "steps": summary_steps,
             "cleanup_steps": cleanup_steps,
+            "services": service_states,
+            "service_cleanup": service_cleanup,
             "failure": failure,
             "warnings": warnings,
             "evidence_dir": str(run_dir),
@@ -143,6 +178,106 @@ class DeterministicRuntime:
             manifest_payload={},
         )
         return summary
+
+    def _load_resumed_vars(self, resume_run_id: str | None) -> dict[str, Any]:
+        if not resume_run_id:
+            return {}
+        context_path = Path("runs") / resume_run_id / "context.json"
+        if not context_path.is_file():
+            raise StepExecutionError(f"resume context not found for run '{resume_run_id}'")
+        payload = json.loads(context_path.read_text(encoding="utf-8"))
+        resumed_vars = payload.get("vars")
+        return resumed_vars if isinstance(resumed_vars, dict) else {}
+
+    def _session_registry_path(self) -> Path:
+        return Path("runs") / ".service-sessions.json"
+
+    def _load_session_registry(self) -> dict[str, Any]:
+        path = self._session_registry_path()
+        if not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _write_session_registry(self, payload: dict[str, Any]) -> None:
+        path = self._session_registry_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    def _ensure_services(
+        self,
+        *,
+        scenario: Scenario,
+        context: dict[str, Any],
+        run_dir: Path,
+        no_services: bool,
+        reuse_sessions: bool,
+    ) -> dict[str, dict[str, Any]]:
+        service_defs = scenario.services or {}
+        service_states: dict[str, dict[str, Any]] = {}
+        if no_services or not service_defs:
+            return service_states
+
+        registry = self._load_session_registry()
+        for service_name, service_cfg in service_defs.items():
+            cfg = render_templates(service_cfg, ctx=context)
+            service_type = str(cfg.get("type", ""))
+            evidence_root = run_dir / "evidence" / "00-services" / service_name
+            if service_type == "applauncher":
+                exports, verify_evidence = ensure_applauncher_session(
+                    cfg,
+                    session_registry=registry,
+                    allow_reuse=reuse_sessions,
+                )
+            else:
+                raise StepExecutionError(f"unsupported service type '{service_type}' for service '{service_name}'")
+
+            service_states[service_name] = {
+                "type": service_type,
+                **exports,
+                "stopOnExit": bool(cfg.get("stopOnExit", False)),
+                "session": cfg.get("session"),
+            }
+            services_ns = context["vars"].setdefault("services", {})
+            if isinstance(services_ns, dict):
+                services_ns[service_name] = service_states[service_name]
+
+            self.evidence_collector.write_json(evidence_root / "verify.json", verify_evidence)
+
+        self.evidence_collector.write_json(run_dir / "services.json", service_states)
+        self._write_session_registry(registry)
+        return service_states
+
+    def _stop_services(self, *, scenario: Scenario, service_states: dict[str, dict[str, Any]], stop_services: bool) -> dict[str, Any]:
+        cleanup: dict[str, Any] = {}
+        if not service_states:
+            return cleanup
+
+        registry = self._load_session_registry()
+        for service_name, state in service_states.items():
+            should_stop = stop_services or bool(state.get("stopOnExit", False))
+            if not should_stop:
+                cleanup[service_name] = {"stopped": False}
+                continue
+            pid = state.get("pid")
+            if pid:
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                    cleanup[service_name] = {"stopped": True, "pid": int(pid)}
+                except ProcessLookupError:
+                    cleanup[service_name] = {"stopped": False, "pid": int(pid), "reason": "not-found"}
+            else:
+                cleanup[service_name] = {"stopped": False, "pid": None}
+
+            session_name = state.get("session")
+            if isinstance(session_name, str) and session_name in registry:
+                registry.pop(session_name, None)
+
+        self._write_session_registry(registry)
+        return cleanup
 
     def _run_one(self, *, step: Any, step_index: int, context: dict[str, Any], phase: str = "execution") -> dict[str, Any]:
         plugin = self.plugin_registry.resolve(step.type)

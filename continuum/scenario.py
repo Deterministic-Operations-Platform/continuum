@@ -31,6 +31,7 @@ class Scenario:
     rail: str
     steps: tuple[ScenarioStep, ...]
     vars: dict[str, Any]
+    services: dict[str, dict[str, Any]] = field(default_factory=dict)
     cleanup_steps: tuple[ScenarioStep, ...] = ()
 
     @staticmethod
@@ -52,13 +53,36 @@ class Scenario:
         if not isinstance(raw_cleanup, list):
             raise ScenarioValidationError("cleanup_steps must be an array when provided")
 
+        raw_services = data.get("services") or {}
+        if not isinstance(raw_services, dict):
+            raise ScenarioValidationError("services must be a mapping when provided")
+
         return Scenario(
             name=str(data["name"]),
             rail=str(data["rail"]),
             steps=tuple(_parse_steps(raw_steps, label="steps")),
             cleanup_steps=tuple(_parse_steps(raw_cleanup, label="cleanup_steps")),
             vars=raw_vars,
+            services=_parse_services(raw_services),
         )
+
+
+def _parse_services(raw_services: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    parsed: dict[str, dict[str, Any]] = {}
+    for name, cfg in raw_services.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ScenarioValidationError("services keys must be non-empty strings")
+        if not isinstance(cfg, dict):
+            raise ScenarioValidationError(f"service '{name}' must be a mapping")
+        service_type = cfg.get("type")
+        if not isinstance(service_type, str) or not service_type.strip():
+            raise ScenarioValidationError(f"service '{name}' requires a non-empty type")
+        normalized = dict(cfg)
+        normalized["type"] = service_type.strip()
+        normalized.setdefault("reuse", True)
+        normalized.setdefault("verifyTimeoutSec", 10)
+        parsed[name.strip()] = normalized
+    return parsed
 
 
 def step_key(step: dict[str, Any], index: int) -> str:
