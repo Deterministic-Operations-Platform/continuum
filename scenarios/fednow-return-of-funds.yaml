@@ -17,8 +17,9 @@ steps:
       url: http://localhost:8080
       timeoutSec: 10
 
-  - name: Run Postman ROF collection
+  - name: Run Postman ROF
     type: postman.run
+    id: run_postman
     with:
       collection: postman/ROF.collection.json
       environment: postman/local.environment.json
@@ -54,8 +55,8 @@ steps:
     type: jira.attach
     with:
       files:
-        - ${runDir}/evidence/03-Run_Postman_ROF_collection/newman-report.html
-        - ${runDir}/evidence/04-Verify_Mongo_results/assertions.json
+        - ${vars.newmanHtml}
+        - ${vars.steps.run_postman.newmanJson}
 
   - name: Stop AppLauncher
     type: applauncher.stop

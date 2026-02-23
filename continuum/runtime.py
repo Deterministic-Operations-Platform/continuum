@@ -70,15 +70,27 @@ class DeterministicRuntime:
             step_started = datetime.now(timezone.utc)
             try:
                 result = plugin.run(step_name=step.name, step_with=step_with, ctx=context, step_index=index)
+
+                exports = result.exports or {}
+                if exports:
+                    context["vars"].update(exports)
+                    steps_ns = context["vars"].setdefault("steps", {})
+                    if not isinstance(steps_ns, dict):
+                        steps_ns = {}
+                        context["vars"]["steps"] = steps_ns
+                    steps_ns[step.key] = exports
+
                 summary_steps.append(
                     {
                         "index": index,
                         "name": step.name,
+                        "key": step.key,
                         "type": step.type,
                         "ok": result.ok,
                         "ms": int((datetime.now(timezone.utc) - step_started).total_seconds() * 1000),
                         "details": result.details,
                         "evidence": result.evidence_paths,
+                        "exports": exports,
                     }
                 )
                 if not result.ok:
@@ -93,6 +105,7 @@ class DeterministicRuntime:
                     {
                         "index": index,
                         "name": step.name,
+                        "key": step.key,
                         "type": step.type,
                         "ok": False,
                         "error": str(err),
@@ -106,6 +119,7 @@ class DeterministicRuntime:
                     {
                         "index": index,
                         "name": step.name,
+                        "key": step.key,
                         "type": step.type,
                         "ok": False,
                         "error": str(err),
