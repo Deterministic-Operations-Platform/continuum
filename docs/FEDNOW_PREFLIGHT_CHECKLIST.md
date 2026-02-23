@@ -49,6 +49,9 @@ pwsh -File docs/scripts/fednow-preflight.ps1 \
 - **Pass**: script exits `0` and prints `FEDNOW preflight: PASS`.
 - **Fail**: script exits `1` and prints each failed check.
 
+### Troubleshooting note
+- If health endpoints require auth/TLS, point the script at local dev readiness URLs (or pass custom `-AppLauncherHealthUrl` / `-TransportHealthUrl`) to avoid false fails.
+
 ## Recommended Run Sequence
 1. Run preflight script.
 2. If pass, execute FEDNOW run command with fixed run id.
