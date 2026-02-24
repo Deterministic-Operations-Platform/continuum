@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 import glob
@@ -11,6 +12,7 @@ import json
 import mimetypes
 import os
 import re
+import socket
 import sqlite3
 import shutil
 import signal
@@ -783,6 +785,59 @@ class PreflightChecklistPlugin:
         }
         path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "preflight.json", details)
         return StepResult(ok=details["ok"], details=details, evidence_paths=[path], exports={"preflightOk": details["ok"]})
+
+
+class GatewayCheckPlugin:
+    type = "gateway.check"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        endpoint = str(step_with.get("endpoint") or step_with.get("url") or "").strip()
+        if not endpoint:
+            raise StepExecutionError("gateway.check requires with.endpoint")
+        timeout_sec = max(1, int(step_with.get("timeoutSec", 5)))
+        retries = max(1, int(step_with.get("retries", 2)))
+        parsed = urlparse(endpoint)
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            addresses = sorted({entry[4][0] for entry in socket.getaddrinfo(host, port)})
+            dns = {"ok": True, "host": host, "addresses": addresses}
+        except Exception as err:
+            dns = {"ok": False, "host": host, "classification": "dns", "error": str(err)}
+
+        ok = False
+        response: dict[str, Any] = {"classification": "unreachable"}
+        for attempt in range(1, retries + 1):
+            try:
+                req = urllib.request.Request(url=endpoint, method="GET")
+                with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                    code = int(resp.status)
+                    response = {"attempt": attempt, "status": code, "classification": "ok" if 200 <= code < 300 else "http_5xx"}
+                    if 200 <= code < 300:
+                        ok = True
+                        break
+            except urllib.error.HTTPError as err:
+                code = int(err.code)
+                response = {
+                    "attempt": attempt,
+                    "status": code,
+                    "classification": "auth" if code in {401, 403} else "http_5xx" if code >= 500 else "http_error",
+                    "error": str(err),
+                }
+            except TimeoutError as err:
+                response = {"attempt": attempt, "classification": "timeout", "error": str(err)}
+            except Exception as err:
+                response = {"attempt": attempt, "classification": "network", "error": str(err)}
+
+        details = {
+            "ok": ok,
+            "endpoint": endpoint,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "dns": dns,
+            "response": response,
+        }
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "gateway_check.json", details)
+        return StepResult(ok=ok, details=details, evidence_paths=[path], exports={"gatewayHealthy": ok})
 
 
 class PostmanRunPlugin:
@@ -1739,6 +1794,7 @@ class PluginRegistry:
             HttpHealthPlugin(),
             HttpRequestPlugin(),
             PreflightChecklistPlugin(),
+            GatewayCheckPlugin(),
             PostmanRunPlugin(),
             MongoVerifyPlugin(),
             MongoDbVerifyPlugin(),

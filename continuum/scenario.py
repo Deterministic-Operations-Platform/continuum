@@ -36,6 +36,7 @@ class Scenario:
     services: dict[str, dict[str, Any]] = field(default_factory=dict)
     governance: dict[str, Any] = field(default_factory=dict)
     policy: dict[str, Any] = field(default_factory=dict)
+    dependencies: dict[str, dict[str, Any]] = field(default_factory=dict)
     cleanup_steps: tuple[ScenarioStep, ...] = ()
 
     @staticmethod
@@ -69,6 +70,10 @@ class Scenario:
         if not isinstance(raw_policy, dict):
             raise ScenarioValidationError("policy must be a mapping when provided")
 
+        raw_dependencies = data.get("dependencies") or {}
+        if not isinstance(raw_dependencies, dict):
+            raise ScenarioValidationError("dependencies must be a mapping when provided")
+
         return Scenario(
             name=str(data["name"]),
             rail=str(data["rail"]),
@@ -78,7 +83,33 @@ class Scenario:
             services=_parse_services(raw_services),
             governance=_parse_governance(raw_governance),
             policy=_parse_policy(raw_policy),
+            dependencies=_parse_dependencies(raw_dependencies),
         )
+
+
+def _parse_dependencies(raw_dependencies: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    parsed: dict[str, dict[str, Any]] = {}
+    for name, cfg in raw_dependencies.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ScenarioValidationError("dependencies keys must be non-empty strings")
+        if not isinstance(cfg, dict):
+            raise ScenarioValidationError(f"dependency '{name}' must be a mapping")
+
+        required = cfg.get("required", True)
+        if not isinstance(required, bool):
+            raise ScenarioValidationError(f"dependency '{name}' field 'required' must be boolean")
+
+        fallback = cfg.get("fallback")
+        if fallback is not None and fallback not in {"stub", "replay"}:
+            raise ScenarioValidationError(f"dependency '{name}' field 'fallback' must be 'stub' or 'replay' when provided")
+
+        allowed_modes = cfg.get("allowed_modes", ["live", "stub", "replay"])
+        if not isinstance(allowed_modes, list) or not all(isinstance(v, str) and v in {"live", "stub", "replay"} for v in allowed_modes):
+            raise ScenarioValidationError(
+                f"dependency '{name}' field 'allowed_modes' must be an array containing only live|stub|replay"
+            )
+        parsed[name.strip()] = dict(cfg)
+    return parsed
 
 
 def _parse_services(raw_services: dict[str, Any]) -> dict[str, dict[str, Any]]:

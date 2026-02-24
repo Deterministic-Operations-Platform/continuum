@@ -66,6 +66,25 @@ steps:
         with self.assertRaises(ScenarioValidationError):
             load_scenario(scenario_path)
 
+    def test_dependencies_policy_schema_is_supported(self) -> None:
+        payload = """name: gateway-policy
+rail: test
+dependencies:
+  gateway:
+    endpoint: http://localhost:8080/health
+    required: false
+    fallback: stub
+    allowed_modes: [live, stub]
+steps:
+  - name: Checklist
+    type: preflight.checklist
+"""
+        scenario_path = self._write_scenario("schema-test-dependencies", "dependencies.yaml", payload)
+        scenario = load_scenario(scenario_path)
+
+        self.assertIn("gateway", scenario.dependencies)
+        self.assertEqual(scenario.dependencies["gateway"]["fallback"], "stub")
+
 
 if __name__ == "__main__":
     unittest.main()
