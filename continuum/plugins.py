@@ -1271,6 +1271,175 @@ class JiraAttachPlugin:
         return StepResult(ok=ok, details=details, evidence_paths=[path])
 
 
+class JiraPublishPlugin:
+    type = "jira.publish"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        env = ctx.get("env", {}) or {}
+        base_url = str(env.get("JIRA_BASE_URL") or "").rstrip("/")
+        email = str(env.get("JIRA_EMAIL") or "")
+        token = str(env.get("JIRA_API_TOKEN") or "")
+        issue_key = str(step_with.get("issueKey") or ctx.get("vars", {}).get("issueKey") or env.get("JIRA_ISSUE_KEY") or "").strip()
+        soft_fail = bool(step_with.get("softFail", False))
+        api_version = int(step_with.get("apiVersion", 2) or 2)
+
+        missing: list[str] = []
+        if not base_url:
+            missing.append("JIRA_BASE_URL")
+        if not email:
+            missing.append("JIRA_EMAIL")
+        if not token:
+            missing.append("JIRA_API_TOKEN")
+        if not issue_key:
+            missing.append("issueKey")
+
+        run_id = str(ctx.get("run_id") or "")
+        run_dir = Path(str(ctx.get("run_dir") or ""))
+        summary: dict[str, Any] = {}
+        sig: dict[str, Any] = {}
+        try:
+            summary_path = run_dir / "summary.json"
+            if summary_path.is_file():
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            summary = {}
+        try:
+            sig_path = run_dir / "bundle_signature.json"
+            if sig_path.is_file():
+                sig = json.loads(sig_path.read_text(encoding="utf-8"))
+        except Exception:
+            sig = {}
+
+        policy = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
+        policy_ok = bool(policy.get("ok")) if isinstance(policy, dict) else False
+        policy_missing = policy.get("missing") if isinstance(policy, dict) else []
+        if not isinstance(policy_missing, list):
+            policy_missing = []
+
+        key_id = str(sig.get("keyId") or "")
+        manifest_sha = str(sig.get("manifest_sha256") or "")
+        trace_id = str(ctx.get("vars", {}).get("traceId") or summary.get("traceId") or "")
+        status = str(summary.get("status") or ctx.get("vars", {}).get("status") or "unknown")
+        site_url = str(env.get("CONTINUUM_SITE_URL") or "").rstrip("/")
+        report_url = f"{site_url}/runs/{run_id}/report.html" if site_url and run_id else ""
+
+        default_body = (
+            f"Continuum Run: {run_id}\n"
+            f"Status: {status}\n"
+            f"TraceId: {trace_id}\n"
+            f"Policy: {'PASS' if policy_ok else 'FAIL'}"
+            + (f" (missing: {', '.join(str(x) for x in policy_missing)})" if (not policy_ok and policy_missing) else "")
+            + "\n"
+            + (f"Signature: keyId={key_id} manifest_sha256={manifest_sha}\n" if (key_id or manifest_sha) else "Signature: (not present)\n")
+            + (f"Report: {report_url}\n" if report_url else "")
+        )
+        body = str(step_with.get("body") or default_body)
+
+        attach_cfg: dict[str, Any] = {}
+        if isinstance(step_with.get("attach"), list):
+            attach_cfg["files"] = [str(x) for x in step_with.get("attach") if str(x).strip()]
+        for key in ("files", "globs", "fromSteps", "recursive", "includeRunBundle", "maxFiles"):
+            if key in step_with:
+                attach_cfg[key] = step_with.get(key)
+        files = resolve_attach_files(attach_cfg, str(run_dir)) if attach_cfg else []
+
+        step_dir = ctx["step_dir"](step_index, step_name)
+        if missing:
+            payload = {
+                "ok": True,
+                "dryRun": True,
+                "missing": missing,
+                "issueKey": issue_key,
+                "wouldComment": True,
+                "bodyPreview": body[:1200],
+                "wouldAttachCount": len(files),
+                "files": files,
+            }
+            path = ctx["write_json"](step_dir, "jira_publish.json", payload)
+            return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"jiraPublished": False})
+
+        auth = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
+        headers = {
+            "Authorization": f"Basic {auth}",
+            "Accept": "application/json",
+            "User-Agent": "continuum/0.2 jira.publish",
+        }
+
+        def _req(method: str, url: str, data: bytes | None, extra_headers: dict[str, str] | None = None) -> tuple[int, str]:
+            req_headers = dict(headers)
+            if extra_headers:
+                req_headers.update(extra_headers)
+            request = urllib.request.Request(url, data=data, headers=req_headers, method=method)
+            try:
+                with urllib.request.urlopen(request, timeout=int(step_with.get("timeoutSec", 20))) as resp:
+                    return int(resp.status), resp.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as err:
+                body_text = err.read().decode("utf-8", errors="replace") if hasattr(err, "read") else str(err)
+                return int(getattr(err, "code", 0) or 0), body_text
+            except Exception as err:
+                return 0, str(err)
+
+        comment_url = f"{base_url}/rest/api/{api_version}/issue/{issue_key}/comment"
+        if api_version == 3:
+            comment_payload: dict[str, Any] = {
+                "body": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [{"type": "paragraph", "content": [{"type": "text", "text": body}]}],
+                }
+            }
+        else:
+            comment_payload = {"body": body}
+        c_status, c_body = _req("POST", comment_url, json.dumps(comment_payload).encode("utf-8"), {"Content-Type": "application/json"})
+        comment_ok = 200 <= c_status < 300
+
+        attach_ok = True
+        a_status: int | None = None
+        a_body: str | None = None
+        if files:
+            boundary = f"----continuum-{uuid.uuid4().hex}"
+            parts: list[bytes] = []
+            for file_name in files:
+                file_path = Path(file_name)
+                if not file_path.is_file():
+                    continue
+                content = file_path.read_bytes()
+                content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+                parts.append(
+                    (
+                        f"--{boundary}\r\n"
+                        f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'
+                        f"Content-Type: {content_type}\r\n\r\n"
+                    ).encode("utf-8")
+                    + content
+                    + b"\r\n"
+                )
+            parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+            data = b"".join(parts)
+            attach_url = f"{base_url}/rest/api/{api_version}/issue/{issue_key}/attachments"
+            a_status, a_body = _req(
+                "POST",
+                attach_url,
+                data,
+                {"Content-Type": f"multipart/form-data; boundary={boundary}", "X-Atlassian-Token": "no-check"},
+            )
+            attach_ok = 200 <= int(a_status or 0) < 300
+
+        ok = bool(comment_ok and attach_ok)
+        payload = {
+            "ok": ok,
+            "dryRun": False,
+            "issueKey": issue_key,
+            "comment": {"ok": comment_ok, "status": c_status, "responsePreview": (c_body or "")[:1000]},
+            "attachments": {"ok": attach_ok, "status": a_status, "count": len(files), "responsePreview": (a_body or "")[:1000]},
+            "files": files,
+        }
+        path = ctx["write_json"](step_dir, "jira_publish.json", payload)
+        if not ok and not soft_fail:
+            return StepResult(ok=False, details=payload, evidence_paths=[path], exports={"jiraPublished": False})
+        return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"jiraPublished": ok})
+
+
 class GitBranchPlugin:
     type = "git.branch"
 
@@ -1614,6 +1783,7 @@ class PluginRegistry:
             JiraFetchPlugin(),
             JiraCommentPlugin(),
             JiraAttachPlugin(),
+            JiraPublishPlugin(),
             GitBranchPlugin(),
             GitCommitPlugin(),
             GitPrPlugin(),

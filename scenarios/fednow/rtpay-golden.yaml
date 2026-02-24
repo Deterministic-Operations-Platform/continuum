@@ -63,26 +63,18 @@ steps:
         include: ["${traceId}", "error", "exception"]
       maxLines: 500
 
-  - name: Publish Jira comment
-    key: jira_comment
-    type: jira.comment
+  - name: Publish run to Jira
+    key: publish_to_jira
+    type: jira.publish
     with:
-      body: "Continuum payments golden run ${runId} completed. Trace ${traceId}. Report + signed evidence attached."
-
-  - name: Attach evidence bundle
-    key: jira_attach
-    type: jira.attach
-    with:
-      globs:
-        - evidence/**/newman-summary.json
-        - evidence/**/assertions.json
-        - evidence/**/snippets.json
-        - trace.json
+      issueKey: "${env.JIRA_ISSUE_KEY}"
+      attach:
+        - report.html
         - summary.json
         - manifest.json
         - bundle_signature.json
-        - report.html
-      maxFiles: 40
+      apiVersion: 2
+      softFail: false
 
 cleanup_steps:
   - name: Stop AppLauncher session

@@ -28,6 +28,10 @@ class PublishedRun:
     ended_at: str
     trace_id: str
     git_head: str
+    policy_ok: bool
+    signed: bool
+    signature_key_id: str
+    manifest_sha256: str
     report_path: str
 
 
@@ -81,6 +85,8 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
         context = _read_json(context_path) if context_path.exists() else {}
         manifest_path = summary_path.parent / "manifest.json"
         manifest = _read_json(manifest_path) if manifest_path.exists() else {}
+        signature_path = summary_path.parent / "bundle_signature.json"
+        signature = _read_json(signature_path) if signature_path.exists() else {}
         if not (summary_path.parent / "report.html").is_file():
             ensure_report(summary_path.parent)
 
@@ -98,6 +104,10 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
                 ended_at=ended,
                 trace_id=trace_id,
                 git_head=git_head,
+                policy_ok=bool((summary.get("policy") or {}).get("ok")) if isinstance(summary.get("policy"), dict) else False,
+                signed=signature_path.is_file(),
+                signature_key_id=str(signature.get("keyId") or ""),
+                manifest_sha256=str(signature.get("manifest_sha256") or ""),
                 report_path=f"runs/{run_id}/report.html",
             )
         )
@@ -117,6 +127,10 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             "endedAt": item.ended_at,
             "traceId": item.trace_id,
             "gitHead": item.git_head,
+            "policyOk": item.policy_ok,
+            "signed": item.signed,
+            "signatureKeyId": item.signature_key_id,
+            "manifestSha256": item.manifest_sha256,
             "report": item.report_path,
             "summary": f"runs/{item.run_id}/summary.json",
             "context": f"runs/{item.run_id}/context.json",
@@ -159,6 +173,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             f"<td class='select-cell'><input type='checkbox' class='compare-check' aria-label='Select {escape(item.run_id)} for compare'/></td>"
             f"<td><a class='run-link' href='runs/{escape(item.run_id)}/report.html'>{escape(item.run_id)}</a></td>"
             f"<td><span class='status-badge status-{escape(status_tone)}'>{escape(item.status)}</span></td>"
+            f"<td><span class='status-badge status-{'success' if item.policy_ok else 'danger'}'>{'PASS' if item.policy_ok else 'FAIL'}</span></td>"
+            f"<td><span class='status-badge status-{'success' if item.signed else 'muted'}'>{'YES' if item.signed else 'NO'}</span></td>"
             f"<td class='mono'>{escape(item.trace_id) or 'n/a'}</td>"
             f"<td><code>{escape(item.git_head) or 'n/a'}</code></td>"
             f"<td class='mono'>{escape(item.started_at) or 'n/a'}</td>"
@@ -646,7 +662,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       </div>
       <div class='table-wrap'>
         <table id='runs'>
-          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
+          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Policy</th><th>Signed</th><th>Trace ID</th><th>Git HEAD</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
           <tbody>
             __ROWS__
             <tr id='emptyRow' hidden><td colspan='8'>No runs match the current filter.</td></tr>
