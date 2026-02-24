@@ -51,6 +51,16 @@ steps:
         - ${runDir}/evidence/**/newman-report.html
         - ${runDir}/summary.json
 
+  - name: publish_to_jira
+    type: jira.publish
+    with:
+      issueKey: ${env.JIRA_ISSUE_KEY}
+      attach:
+        - report.html
+        - summary.json
+        - manifest.json
+        - bundle_signature.json
+
 cleanup_steps:
   - name: stop-applauncher
     type: applauncher.session.stop

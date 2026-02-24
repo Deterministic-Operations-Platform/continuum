@@ -51,8 +51,12 @@ jobs:
           continuum plan "${SCENARIO}" --run-id "${RUN_ID}"
 
       - name: Run scenario
+        env:
+          CONTINUUM_SIGNING_KEY: ${{ secrets.CONTINUUM_SIGNING_KEY }}
+          CONTINUUM_SIGNING_KEY_ID: ci
         run: |
-          continuum run "${SCENARIO}" --run-id "${RUN_ID}" --skip jira.comment --skip jira.attach
+          continuum run "${SCENARIO}" --run-id "${RUN_ID}" --skip jira.comment --skip jira.attach --skip jira.publish
+          continuum verify --run-id "${RUN_ID}" --runs-dir runs
 
       - name: Job summary
         if: always()

@@ -28,6 +28,8 @@ class PublishedRun:
     trace_id: str
     git_head: str
     report_path: str
+    signed: bool
+    policy_ok: bool
 
 
 def publish_run(*, run_id: str, runs_dir: Path = Path("runs"), site_dir: Path = Path("site"), keep_runs: int = 25) -> Path:
@@ -80,6 +82,8 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
         context = _read_json(context_path) if context_path.exists() else {}
         manifest_path = summary_path.parent / "manifest.json"
         manifest = _read_json(manifest_path) if manifest_path.exists() else {}
+        signature_path = summary_path.parent / "bundle_signature.json"
+        signature = _read_json(signature_path) if signature_path.exists() else {}
         if not (summary_path.parent / "report.html").is_file():
             ensure_report(summary_path.parent)
 
@@ -88,6 +92,10 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
         ended = str(summary.get("endedAt") or summary.get("ended_at") or "")
         trace_id = str(summary.get("traceId") or context.get("vars", {}).get("traceId") or "")
         git_head = str(manifest.get("git_head") or manifest.get("gitHead") or "")
+        policy = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
+        policy_post = policy.get("post") if isinstance(policy.get("post"), dict) else {}
+        signed = bool(signature.get("signature"))
+        policy_ok = bool(policy_post.get("ok", policy.get("ok", False)))
 
         results.append(
             PublishedRun(
@@ -98,6 +106,8 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
                 trace_id=trace_id,
                 git_head=git_head,
                 report_path=f"runs/{run_id}/report.html",
+                signed=signed,
+                policy_ok=policy_ok,
             )
         )
     return results
@@ -117,6 +127,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             "traceId": item.trace_id,
             "gitHead": item.git_head,
             "report": item.report_path,
+            "signed": item.signed,
+            "policyOk": item.policy_ok,
             "summary": f"runs/{item.run_id}/summary.json",
             "context": f"runs/{item.run_id}/context.json",
         }
@@ -148,18 +160,23 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
                 item.git_head,
                 item.started_at,
                 item.ended_at,
+                "signed" if item.signed else "unsigned",
+                "policy ok" if item.policy_ok else "policy fail",
             ]
         ).lower()
         rows.append(
             f"<tr data-row='run' data-status='{escape(status_tone)}' data-status-value='{escape(item.status.lower())}' "
             f"data-run-id='{escape(item.run_id)}' data-status-label='{escape(item.status)}' "
             f"data-trace-id='{escape(item.trace_id)}' data-git-head='{escape(item.git_head)}' "
-            f"data-started='{escape(item.started_at)}' data-ended='{escape(item.ended_at)}' data-search='{escape(search_blob)}'>"
+            f"data-started='{escape(item.started_at)}' data-ended='{escape(item.ended_at)}' "
+            f"data-signed='{str(item.signed).lower()}' data-policy-ok='{str(item.policy_ok).lower()}' data-search='{escape(search_blob)}'>"
             f"<td class='select-cell'><input type='checkbox' class='compare-check' aria-label='Select {escape(item.run_id)} for compare'/></td>"
             f"<td><a class='run-link' href='runs/{escape(item.run_id)}/report.html'>{escape(item.run_id)}</a></td>"
             f"<td><span class='status-badge status-{escape(status_tone)}'>{escape(item.status)}</span></td>"
             f"<td class='mono'>{escape(item.trace_id) or 'n/a'}</td>"
             f"<td><code>{escape(item.git_head) or 'n/a'}</code></td>"
+            f"<td>{'Yes' if item.signed else 'No'}</td>"
+            f"<td>{'Yes' if item.policy_ok else 'No'}</td>"
             f"<td class='mono'>{escape(item.started_at) or 'n/a'}</td>"
             f"<td class='mono'>{escape(item.ended_at) or 'n/a'}</td>"
             f"<td><a href='runs/{escape(item.run_id)}/summary.json'>summary</a> | "
@@ -645,7 +662,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       </div>
       <div class='table-wrap'>
         <table id='runs'>
-          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
+          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Signed?</th><th>Policy OK?</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
           <tbody>
             __ROWS__
             <tr id='emptyRow' hidden><td colspan='8'>No runs match the current filter.</td></tr>
@@ -706,6 +723,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
         status: row.dataset.statusLabel || "",
         traceId: row.dataset.traceId || "",
         gitHead: row.dataset.gitHead || "",
+        signed: row.dataset.signed || "false",
+        policyOk: row.dataset.policyOk || "false",
         started: row.dataset.started || "",
         ended: row.dataset.ended || ""
       };
@@ -736,6 +755,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
               <div class='kv-row'><span class='k'>Status</span><span class='v'>${esc(item.status || "n/a")}</span></div>
               <div class='kv-row'><span class='k'>Trace</span><span class='v mono'>${esc(item.traceId || "n/a")}</span></div>
               <div class='kv-row'><span class='k'>Git</span><span class='v mono'>${esc(item.gitHead || "n/a")}</span></div>
+              <div class='kv-row'><span class='k'>Signed</span><span class='v'>${esc(item.signed)}</span></div>
+              <div class='kv-row'><span class='k'>Policy OK</span><span class='v'>${esc(item.policyOk)}</span></div>
               <div class='kv-row'><span class='k'>Start</span><span class='v mono'>${esc(item.started || "n/a")}</span></div>
             </div>
           </article>
@@ -754,6 +775,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
         ["Status", selected[0].status, selected[1].status],
         ["Trace ID", selected[0].traceId, selected[1].traceId],
         ["Git HEAD", selected[0].gitHead, selected[1].gitHead],
+        ["Signed", selected[0].signed, selected[1].signed],
+        ["Policy OK", selected[0].policyOk, selected[1].policyOk],
         ["Started", selected[0].started, selected[1].started],
         ["Ended", selected[0].ended, selected[1].ended]
       ];

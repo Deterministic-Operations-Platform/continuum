@@ -19,8 +19,12 @@ jobs:
       - id: meta
         run: echo "run_id=ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Run continuum scenario
+        env:
+          CONTINUUM_SIGNING_KEY: ${{ secrets.CONTINUUM_SIGNING_KEY }}
+          CONTINUUM_SIGNING_KEY_ID: ci
         run: |
           python -m continuum run examples/fednow-cam29-success.yaml --run-id "${{ steps.meta.outputs.run_id }}"
+          python -m continuum verify --run-id "${{ steps.meta.outputs.run_id }}" --runs-dir runs
       - name: Upload run bundle artifact
         uses: actions/upload-artifact@v4
         with:
