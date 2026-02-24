@@ -39,8 +39,20 @@ continuum status
 `continuum publish --run-id <id> [--runs-dir runs] [--site-dir site] [--keep-runs 25]`
 - Publish a run bundle to static HTML/JSON under `site/` using the shareable Evidence Viewer index (trace/git compare metadata).
 
+`continuum verify --run-id <id> [--runs-dir runs]`
+- Verify run policy result and bundle signature integrity.
+
+`continuum keygen [--out-dir .continuum/keys] [--name continuum-ed25519]`
+- Generate an Ed25519 keypair for bundle signing and public-key verification workflows.
+
 `continuum serve [--site-dir site] [--host 127.0.0.1] [--port 8080]`
 - Serve published run reports locally for browser access.
+
+## Bundle signing modes
+
+- HMAC signing: set `CONTINUUM_SIGNING_KEY` (or `CONTINUUM_BUNDLE_HMAC_KEY`).
+- Ed25519 signing: set `CONTINUUM_SIGNING_PRIVATE_KEY` or `CONTINUUM_SIGNING_PRIVATE_KEY_FILE`.
+- Ed25519 verification: set `CONTINUUM_SIGNING_PUBLIC_KEY` or `CONTINUUM_SIGNING_PUBLIC_KEY_FILE` (public-key only verification supported).
 
 ## Live connector gates
 
