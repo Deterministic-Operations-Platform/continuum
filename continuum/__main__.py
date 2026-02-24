@@ -1,6 +1,9 @@
 import argparse
+import functools
+import http.server
 import json
 from pathlib import Path
+import socketserver
 import tempfile
 from typing import Any
 
@@ -34,7 +37,7 @@ def _status_payload() -> dict[str, Any]:
         "cwd": str(Path.cwd()),
         "runs_dir": str(runs_dir.resolve()),
         "runs_dir_writable": writable,
-        "commands": ["status", "run", "golden-run", "validate", "plan", "publish", "ci"],
+        "commands": ["status", "run", "golden-run", "validate", "plan", "publish", "ci", "serve"],
         "plugins": sorted(PluginRegistry().available_plugin_names()),
     }
 
@@ -98,6 +101,11 @@ def main() -> None:
     ci.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="How many published runs to keep")
     ci.add_argument("--max-parallel", dest="max_parallel", type=int, default=4, help="Maximum parallel step workers")
     ci.add_argument("--policy-file", dest="policy_file", default=None, help="Path to policy.yaml for evidence gate checks")
+
+    serve = sub.add_parser("serve", help="Serve published site assets locally")
+    serve.add_argument("--site-dir", dest="site_dir", default="site", help="Directory containing published site output")
+    serve.add_argument("--host", dest="host", default="127.0.0.1", help="Host interface to bind")
+    serve.add_argument("--port", dest="port", type=int, default=8080, help="Port to bind")
 
     args = parser.parse_args()
 
@@ -278,6 +286,22 @@ def main() -> None:
         except ContinuumError as err:
             rich_print(f"[bold red]CI FAIL[/bold red]: {err} ({err.failure_class.value})")
             raise SystemExit(1) from err
+
+    if args.cmd == "serve":
+        site_dir = Path(args.site_dir).resolve()
+        if not site_dir.is_dir():
+            rich_print(f"[bold red]Site directory not found[/bold red]: {site_dir}")
+            raise SystemExit(1)
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(site_dir))
+        socketserver.TCPServer.allow_reuse_address = True
+        with socketserver.ThreadingTCPServer((args.host, int(args.port)), handler) as server:
+            url = f"http://{args.host}:{int(args.port)}/"
+            rich_print(f"[green]Serving[/green] {site_dir} at [bold]{url}[/bold]")
+            rich_print("Press Ctrl+C to stop.")
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
         return
 
     parser.print_help()

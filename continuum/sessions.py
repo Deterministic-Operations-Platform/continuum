@@ -94,7 +94,14 @@ def kill_tree(pid: int) -> None:
     if pid <= 0:
         return
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         return
     try:
         os.killpg(pid, signal.SIGTERM)

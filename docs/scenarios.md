@@ -62,6 +62,28 @@ Legacy `with.retries` / `with.backoffMs` is still accepted and normalized.
 
 `cleanup_steps` run after `steps` unless `--no-cleanup` is used.
 
+## Live connectors (strict opt-in)
+
+Jira and Mongo steps run in safe stub mode by default.
+
+To execute live connector calls, enable both:
+
+1. Step-level flag:
+```yaml
+with:
+  live: true
+```
+2. Runtime env gate:
+- `CONTINUUM_ENABLE_LIVE_CONNECTORS=1`
+or connector-specific gates:
+- `CONTINUUM_ENABLE_LIVE_JIRA=1`
+- `CONTINUUM_ENABLE_LIVE_MONGO=1`
+
+Additional live Jira env vars:
+- `JIRA_BASE_URL`
+- `JIRA_EMAIL`
+- `JIRA_API_TOKEN`
+
 ## Example
 
 ```yaml

@@ -12,7 +12,7 @@ steps:
     key: preflight_checklist
     type: preflight.checklist
     with:
-      commands: ["python"]
+      commands: ["python", "newman"]
 
   - name: Ensure AppLauncher session
     key: ensure_applauncher
@@ -33,7 +33,6 @@ steps:
       reporters: cli,json
       envVar:
         baseUrl: http://127.0.0.1:8087
-      allowMissingDependency: true
 
   - name: Verify Mongo assertions
     key: verify_mongo

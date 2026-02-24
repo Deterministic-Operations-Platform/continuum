@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 from threading import Lock
 from time import sleep
@@ -23,6 +22,7 @@ from continuum.plugins import (
     ensure_applauncher_session,
     find_unknown_templates,
     render_templates,
+    resolve_newman_executable,
     resolve_attach_files,
 )
 from continuum.policy import (
@@ -976,17 +976,8 @@ def validate_scenario(scenario: Scenario, *, plugin_registry: PluginRegistry, en
             if dep not in keys:
                 errors.append(f"step {index} ({step.name}): unknown dependsOn key '{dep}'")
 
-        if step.type == "postman.run" and not bool(step.with_.get("allowMissingDependency", False)) and not shutil.which("newman"):
+        if step.type == "postman.run" and not bool(step.with_.get("allowMissingDependency", False)) and resolve_newman_executable() is None:
             errors.append(f"step {index} ({step.name}): missing dependency 'newman'")
-        if step.type in {"mongo.verify", "mongodb.verify"}:
-            try:
-                import pymongo  # type: ignore  # noqa: F401
-            except Exception:
-                errors.append(f"step {index} ({step.name}): missing dependency 'pymongo'")
-        if step.type.startswith("jira."):
-            missing = [k for k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN") if not env_map.get(k)]
-            if missing:
-                errors.append(f"step {index} ({step.name}): missing Jira env vars: {', '.join(missing)}")
         if step.type == "jira.attach":
             files = resolve_attach_files(render_templates(step.with_, ctx=ctx), ctx["run_dir"])
             warnings.append(f"step {index} ({step.name}): jira.attach would attach {len(files)} file(s)")

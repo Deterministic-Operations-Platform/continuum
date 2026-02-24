@@ -2,6 +2,7 @@ import json
 import shutil
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from continuum.evidence import EvidenceCollector
 from continuum.plugins import MongoVerifyPlugin, PluginRegistry, PostmanRunPlugin
@@ -57,12 +58,13 @@ class TraceCorrelationTests(unittest.TestCase):
             plugin_registry=PluginRegistry(plugins=[PostmanRunPlugin(), MongoVerifyPlugin()]),
             evidence_collector=EvidenceCollector(),
         )
-        summary = runtime.execute(
-            scenario=scenario,
-            scenario_source=REPO_ROOT / "tests" / "test_trace_correlation.py",
-            scenario_text="name: trace-explicit",
-            run_id=run_id,
-        )
+        with patch("continuum.plugins.resolve_newman_executable", return_value=None):
+            summary = runtime.execute(
+                scenario=scenario,
+                scenario_source=REPO_ROOT / "tests" / "test_trace_correlation.py",
+                scenario_text="name: trace-explicit",
+                run_id=run_id,
+            )
 
         self.assertEqual(summary["traceId"], "trace-from-scenario")
         postman_missing = json.loads(

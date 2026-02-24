@@ -11,6 +11,7 @@ For v0.1, Python is the executable engine and source of truth. TS/Java implement
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+npm install newman --prefix ./.continuum/vendor/npm --cache ./.continuum/npm-cache
 continuum status
 ```
 
@@ -37,6 +38,21 @@ continuum status
 
 `continuum publish --run-id <id> [--runs-dir runs] [--site-dir site] [--keep-runs 25]`
 - Publish a run bundle to static HTML/JSON under `site/` using the shareable Evidence Viewer index (trace/git compare metadata).
+
+`continuum serve [--site-dir site] [--host 127.0.0.1] [--port 8080]`
+- Serve published run reports locally for browser access.
+
+## Live connector gates
+
+Jira and Mongo plugins default to safe/stub mode. To execute live calls:
+
+- Set `with.live: true` on the step.
+- Set runtime gate env var: `CONTINUUM_ENABLE_LIVE_CONNECTORS=1`
+  - Or connector-specific: `CONTINUUM_ENABLE_LIVE_JIRA=1`, `CONTINUUM_ENABLE_LIVE_MONGO=1`
+- For Jira live mode, also set:
+  - `JIRA_BASE_URL`
+  - `JIRA_EMAIL`
+  - `JIRA_API_TOKEN`
 
 ## Canonical scenario schema (v0.1)
 

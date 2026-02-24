@@ -2,11 +2,23 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import sys
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from continuum import DeterministicRuntime, EvidenceCollector, PluginRegistry, Scenario, ScenarioStep, StepResult
-from continuum.plugins import HttpRequestPlugin, JiraFetchPlugin, MongoDbVerifyPlugin, SqlVerifyPlugin
+from continuum.errors import StepExecutionError
+from continuum.plugins import (
+    HttpRequestPlugin,
+    JiraAttachPlugin,
+    JiraCommentPlugin,
+    JiraFetchPlugin,
+    MongoDbVerifyPlugin,
+    MongoVerifyPlugin,
+    SqlVerifyPlugin,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +29,21 @@ class _NoopPlugin:
 
     def run(self, *, step_name, step_with, ctx, step_index):
         return StepResult(ok=True, details={"ok": True}, evidence_paths=[], exports={})
+
+
+class _FakeHttpResponse:
+    def __init__(self, *, status: int, payload: object):
+        self.status = int(status)
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 class TrustAndConnectorTests(unittest.TestCase):
@@ -157,6 +184,228 @@ class TrustAndConnectorTests(unittest.TestCase):
         required = set(jira_result.details["requiredSteps"])
         self.assertIn("run_postman", required)
         self.assertIn("verify_mongo", required)
+
+    def test_mongo_live_mode_executes_queries_with_env_gate(self) -> None:
+        step_dir = REPO_ROOT / "runs" / "test-mongo-live"
+        self.addCleanup(lambda: shutil.rmtree(step_dir, ignore_errors=True))
+
+        def _ctx_step_dir(index: int, name: str) -> str:
+            return str(step_dir / "evidence" / f"{index + 1:02d}-{name}")
+
+        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
+            output = Path(step_path) / filename
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            return str(output)
+
+        ctx = {
+            "step_dir": _ctx_step_dir,
+            "write_json": _ctx_write_json,
+            "vars": {"traceId": "trace-live"},
+            "run_id": "mongo-live",
+            "run_dir": str(step_dir),
+            "env": {"CONTINUUM_ENABLE_LIVE_CONNECTORS": "1"},
+        }
+
+        class _FakeCursor:
+            def __init__(self, docs: list[dict]):
+                self._docs = list(docs)
+
+            def limit(self, count: int) -> "_FakeCursor":
+                return _FakeCursor(self._docs[: max(0, int(count))])
+
+            def __iter__(self):
+                return iter(self._docs)
+
+        class _FakeCollection:
+            def __init__(self, docs: list[dict]):
+                self._docs = list(docs)
+
+            def count_documents(self, query: dict) -> int:
+                return len([doc for doc in self._docs if doc.get("traceId") == query.get("traceId")])
+
+            def find(self, query: dict, projection: dict | None = None) -> _FakeCursor:
+                matched = [doc for doc in self._docs if doc.get("traceId") == query.get("traceId")]
+                if isinstance(projection, dict):
+                    projected: list[dict] = []
+                    for doc in matched:
+                        keep = {k: v for k, v in doc.items() if projection.get(k, 1)}
+                        projected.append(keep)
+                    return _FakeCursor(projected)
+                return _FakeCursor(matched)
+
+        class _FakeDb:
+            def __getitem__(self, name: str) -> _FakeCollection:
+                return _FakeCollection(
+                    [
+                        {"_id": "1", "traceId": "trace-live", "status": "ok"},
+                        {"_id": "2", "traceId": "trace-live", "status": "ok"},
+                    ]
+                )
+
+        class _FakeAdmin:
+            def command(self, name: str) -> dict:
+                return {"ok": 1, "name": name}
+
+        class _FakeMongoClient:
+            def __init__(self, uri: str, serverSelectionTimeoutMS: int):
+                self.uri = uri
+                self.timeout = serverSelectionTimeoutMS
+                self.admin = _FakeAdmin()
+
+            def __getitem__(self, name: str) -> _FakeDb:
+                return _FakeDb()
+
+            def close(self) -> None:
+                return
+
+        fake_pymongo = SimpleNamespace(MongoClient=_FakeMongoClient)
+        with patch.dict(sys.modules, {"pymongo": fake_pymongo}):
+            result = MongoVerifyPlugin().run(
+                step_name="verify-mongo-live",
+                step_with={
+                    "live": True,
+                    "uri": "mongodb://example.invalid:27017",
+                    "db": "payments",
+                    "autoFilterTraceId": True,
+                    "queries": [{"name": "ledgerRows", "collection": "ledger", "filter": {}, "limit": 10}],
+                    "assert": [{"query": "ledgerRows", "op": "gte", "value": 1}],
+                },
+                ctx=ctx,
+                step_index=0,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.details["mode"], "live")
+        self.assertEqual(result.details["queryResults"]["ledgerRows"]["count"], 2)
+        self.assertTrue(result.details["traceQueryApplied"])
+        self.assertEqual(result.exports["mongoAssertionsOk"], True)
+
+    def test_jira_live_fetch_comment_and_attach(self) -> None:
+        step_dir = REPO_ROOT / "runs" / "test-jira-live"
+        self.addCleanup(lambda: shutil.rmtree(step_dir, ignore_errors=True))
+        attachment = step_dir / "evidence" / "sample.txt"
+        attachment.parent.mkdir(parents=True, exist_ok=True)
+        attachment.write_text("evidence", encoding="utf-8")
+
+        def _ctx_step_dir(index: int, name: str) -> str:
+            return str(step_dir / "evidence" / f"{index + 1:02d}-{name}")
+
+        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
+            output = Path(step_path) / filename
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            return str(output)
+
+        ctx = {
+            "step_dir": _ctx_step_dir,
+            "write_json": _ctx_write_json,
+            "vars": {"traceId": "trace-jira", "issueKey": "PAY-42"},
+            "run_id": "jira-live",
+            "run_dir": str(step_dir),
+            "env": {
+                "CONTINUUM_ENABLE_LIVE_CONNECTORS": "1",
+                "JIRA_BASE_URL": "https://jira.example.test",
+                "JIRA_EMAIL": "engineer@example.test",
+                "JIRA_API_TOKEN": "top-secret-token",
+            },
+        }
+        requests: list[dict[str, str]] = []
+
+        def _fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+            method = request.get_method()
+            url = request.full_url
+            auth = request.headers.get("Authorization", "")
+            requests.append({"method": method, "url": url, "auth": auth})
+            if method == "GET" and "/rest/api/2/issue/" in url:
+                return _FakeHttpResponse(
+                    status=200,
+                    payload={
+                        "fields": {
+                            "labels": ["postman", "mongo"],
+                            "components": [{"name": "payments"}],
+                            "summary": "Investigate payment issue",
+                            "status": {"name": "Open"},
+                        }
+                    },
+                )
+            if method == "POST" and url.endswith("/comment"):
+                return _FakeHttpResponse(status=201, payload={"id": "c-1"})
+            if method == "POST" and url.endswith("/attachments"):
+                return _FakeHttpResponse(status=200, payload=[{"id": "a-1"}])
+            raise AssertionError(f"Unexpected Jira request: {method} {url}")
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            fetch_result = JiraFetchPlugin().run(
+                step_name="jira-fetch-live",
+                step_with={"live": True, "issueKey": "PAY-42"},
+                ctx=ctx,
+                step_index=0,
+            )
+            comment_result = JiraCommentPlugin().run(
+                step_name="jira-comment-live",
+                step_with={"live": True, "body": "Run jira-live completed."},
+                ctx=ctx,
+                step_index=1,
+            )
+            attach_result = JiraAttachPlugin().run(
+                step_name="jira-attach-live",
+                step_with={"live": True, "files": [str(attachment)]},
+                ctx=ctx,
+                step_index=2,
+            )
+
+        required = set(fetch_result.details["requiredSteps"])
+        self.assertIn("run_postman", required)
+        self.assertIn("verify_mongo", required)
+        self.assertTrue(comment_result.ok)
+        self.assertEqual(comment_result.details["commentId"], "c-1")
+        self.assertTrue(attach_result.ok)
+        self.assertEqual(attach_result.details["uploaded"][0]["attachmentId"], "a-1")
+        self.assertTrue(all(item["auth"].startswith("Basic ") for item in requests))
+        self.assertNotIn("top-secret-token", json.dumps(comment_result.details))
+
+    def test_live_connectors_require_runtime_gate(self) -> None:
+        step_dir = REPO_ROOT / "runs" / "test-live-gate-required"
+        self.addCleanup(lambda: shutil.rmtree(step_dir, ignore_errors=True))
+
+        def _ctx_step_dir(index: int, name: str) -> str:
+            return str(step_dir / "evidence" / f"{index + 1:02d}-{name}")
+
+        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
+            output = Path(step_path) / filename
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            return str(output)
+
+        ctx = {
+            "step_dir": _ctx_step_dir,
+            "write_json": _ctx_write_json,
+            "vars": {"traceId": "trace-gate", "issueKey": "PAY-1"},
+            "run_id": "gate-required",
+            "run_dir": str(step_dir),
+            "env": {
+                "JIRA_BASE_URL": "https://jira.example.test",
+                "JIRA_EMAIL": "engineer@example.test",
+                "JIRA_API_TOKEN": "token",
+            },
+        }
+
+        with self.assertRaises(StepExecutionError):
+            JiraCommentPlugin().run(
+                step_name="jira-comment-live",
+                step_with={"live": True, "body": "blocked"},
+                ctx=ctx,
+                step_index=0,
+            )
+
+        with self.assertRaises(StepExecutionError):
+            MongoVerifyPlugin().run(
+                step_name="mongo-live",
+                step_with={"live": True, "uri": "mongodb://example.invalid", "db": "payments", "queries": []},
+                ctx=ctx,
+                step_index=1,
+            )
 
 
     def test_http_request_and_mongodb_verify_plugins(self) -> None:

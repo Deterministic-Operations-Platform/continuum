@@ -32,7 +32,7 @@ class ValidateAndPlanTests(unittest.TestCase):
 
     def test_validate_fails_when_newman_missing_for_postman_step(self) -> None:
         scenario = load_scenario("scenarios/fednow-return-of-funds.yaml")
-        with patch("shutil.which", return_value=None):
+        with patch("continuum.runtime.resolve_newman_executable", return_value=None):
             errors, _ = validate_scenario(scenario, plugin_registry=PluginRegistry(), env={})
         self.assertTrue(any("missing dependency 'newman'" in err for err in errors))
 

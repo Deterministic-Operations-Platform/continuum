@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 import glob
 import json
+import mimetypes
 import os
 import re
 import sqlite3
@@ -14,9 +16,10 @@ import shutil
 import signal
 import subprocess
 import time
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 import urllib.error
 import urllib.request
+import uuid
 
 from continuum.errors import PluginResolutionError, StepExecutionError
 from continuum.sessions import (
@@ -48,7 +51,7 @@ TEMPLATE_PATTERN = re.compile(r"\$\{([^}]+)\}")
 _BACKGROUND_PROCS: dict[int, subprocess.Popen[Any]] = {}
 
 
-def _resolve_newman_executable() -> str | None:
+def resolve_newman_executable() -> str | None:
     candidates = ["newman"]
     local_candidates: list[Path]
     if os.name == "nt":
@@ -72,6 +75,191 @@ def _resolve_newman_executable() -> str | None:
         if candidate.is_file():
             return str(candidate)
     return None
+
+
+def resolve_command(command: str) -> str | None:
+    candidate = str(command or "").strip()
+    if not candidate:
+        return None
+    if candidate.lower() == "newman":
+        return resolve_newman_executable()
+    return shutil.which(candidate)
+
+
+def _is_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _connector_live_gate_enabled(*, ctx: dict[str, Any], connector: str) -> bool:
+    env = ctx.get("env", {}) if isinstance(ctx.get("env"), dict) else {}
+    connector_key = f"CONTINUUM_ENABLE_LIVE_{connector.upper()}"
+    return _is_truthy(env.get("CONTINUUM_ENABLE_LIVE_CONNECTORS")) or _is_truthy(env.get(connector_key))
+
+
+def _live_mode_requested(step_with: dict[str, Any]) -> bool:
+    return _is_truthy(step_with.get("live", False))
+
+
+def _json_compatible(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _json_compatible(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _jira_config(step_with: dict[str, Any], ctx: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    env = ctx.get("env", {}) if isinstance(ctx.get("env"), dict) else {}
+    base_url = str(step_with.get("baseUrl") or env.get("JIRA_BASE_URL") or "").strip().rstrip("/")
+    email = str(step_with.get("email") or env.get("JIRA_EMAIL") or "").strip()
+    token = str(step_with.get("apiToken") or env.get("JIRA_API_TOKEN") or "").strip()
+    timeout_sec = max(1, int(step_with.get("timeoutSec", 30)))
+    missing: list[str] = []
+    if not base_url:
+        missing.append("JIRA_BASE_URL")
+    if not email:
+        missing.append("JIRA_EMAIL")
+    if not token:
+        missing.append("JIRA_API_TOKEN")
+    return {"baseUrl": base_url, "email": email, "token": token, "timeoutSec": timeout_sec}, missing
+
+
+def _jira_preflight(
+    *,
+    step_with: dict[str, Any],
+    ctx: dict[str, Any],
+    require_issue_key: bool,
+) -> dict[str, Any]:
+    requested_live = _live_mode_requested(step_with)
+    if not requested_live:
+        return {"ok": True, "missing": [], "mode": "stub"}
+
+    missing: list[str] = []
+    if not _connector_live_gate_enabled(ctx=ctx, connector="jira"):
+        missing.append("CONTINUUM_ENABLE_LIVE_CONNECTORS or CONTINUUM_ENABLE_LIVE_JIRA")
+    _, auth_missing = _jira_config(step_with, ctx)
+    missing.extend(auth_missing)
+    if require_issue_key:
+        issue_key = str(step_with.get("issueKey") or ctx.get("vars", {}).get("issueKey") or "").strip()
+        if not issue_key:
+            missing.append("with.issueKey or vars.issueKey")
+
+    return {"ok": not missing, "missing": sorted(set(missing)), "mode": "live"}
+
+
+def _jira_auth_header(email: str, token: str) -> str:
+    encoded = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
+    return f"Basic {encoded}"
+
+
+def _jira_request_json(
+    *,
+    method: str,
+    base_url: str,
+    path: str,
+    email: str,
+    token: str,
+    timeout_sec: int,
+    payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, Any]:
+    url = f"{base_url}{path}"
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    req_headers = {"Accept": "application/json", "Authorization": _jira_auth_header(email, token)}
+    if payload is not None:
+        req_headers["Content-Type"] = "application/json"
+    if headers:
+        req_headers.update(headers)
+    req = urllib.request.Request(url=url, data=data, headers=req_headers, method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as response:
+            body = response.read().decode("utf-8", errors="replace")
+            parsed: Any = {}
+            if body.strip():
+                try:
+                    parsed = json.loads(body)
+                except json.JSONDecodeError:
+                    parsed = {"raw": body}
+            return int(response.status), parsed
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", errors="replace")
+        message = body.strip()[:400] if body.strip() else err.reason
+        raise StepExecutionError(f"jira request failed ({err.code}) {method.upper()} {path}: {message}") from err
+    except urllib.error.URLError as err:
+        raise StepExecutionError(f"jira request failed {method.upper()} {path}: {err.reason}") from err
+
+
+def _jira_request_attachment(
+    *,
+    base_url: str,
+    issue_key: str,
+    file_path: str,
+    email: str,
+    token: str,
+    timeout_sec: int,
+) -> tuple[int, Any]:
+    path = f"/rest/api/2/issue/{quote(issue_key)}/attachments"
+    url = f"{base_url}{path}"
+    file_obj = Path(file_path)
+    payload = file_obj.read_bytes()
+    content_type = mimetypes.guess_type(file_obj.name)[0] or "application/octet-stream"
+    boundary = f"----continuum-{uuid.uuid4().hex}"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{file_obj.name}"\r\n'
+        f"Content-Type: {content_type}\r\n\r\n"
+    ).encode("utf-8") + payload + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    headers = {
+        "Accept": "application/json",
+        "Authorization": _jira_auth_header(email, token),
+        "X-Atlassian-Token": "no-check",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    }
+    req = urllib.request.Request(url=url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_sec) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            parsed: Any = {}
+            if text.strip():
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = {"raw": text}
+            return int(response.status), parsed
+    except urllib.error.HTTPError as err:
+        body_text = err.read().decode("utf-8", errors="replace")
+        message = body_text.strip()[:400] if body_text.strip() else err.reason
+        raise StepExecutionError(f"jira attachment upload failed ({err.code}) for '{file_obj.name}': {message}") from err
+    except urllib.error.URLError as err:
+        raise StepExecutionError(f"jira attachment upload failed for '{file_obj.name}': {err.reason}") from err
+
+
+def _infer_required_steps(step_with: dict[str, Any], *, labels: list[str], components: list[str]) -> list[str]:
+    requirements_map = step_with.get("requirementsMap") if isinstance(step_with.get("requirementsMap"), dict) else {
+        "postman": ["run_postman"],
+        "mongo": ["verify_mongo"],
+        "sql": ["verify_sql"],
+        "logs": ["collect_logs"],
+        "jira": ["jira.comment", "jira.attach"],
+    }
+    required_steps: set[str] = {str(v).strip() for v in (step_with.get("requiredSteps") or []) if str(v).strip()}
+    tokens = [*labels, *components]
+    for token in tokens:
+        lower_token = token.lower()
+        for matcher, mapped in requirements_map.items():
+            if str(matcher).lower() not in lower_token:
+                continue
+            if isinstance(mapped, list):
+                for item in mapped:
+                    if isinstance(item, str) and item.strip():
+                        required_steps.add(item.strip())
+    return sorted(required_steps)
 
 
 def _kill_and_reap(pid: int) -> None:
@@ -580,7 +768,7 @@ class PreflightChecklistPlugin:
         files = [str(v).strip() for v in (step_with.get("files") or []) if str(v).strip()]
 
         env_missing = [key for key in env_required if not ctx.get("env", {}).get(key)]
-        cmd_missing = [cmd for cmd in commands if shutil.which(cmd) is None]
+        cmd_missing = [cmd for cmd in commands if resolve_command(cmd) is None]
         file_missing = [path for path in files if not Path(path).is_file()]
 
         details = {
@@ -600,7 +788,7 @@ class PostmanRunPlugin:
     type = "postman.run"
 
     def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
-        newman = _resolve_newman_executable()
+        newman = resolve_newman_executable()
         return {"ok": newman is not None, "missing": ["newman"] if newman is None else []}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
@@ -610,7 +798,7 @@ class PostmanRunPlugin:
         run_id = str(ctx.get("run_id") or "")
         env_var = dict(step_with.get("envVar") or {})
         env_var.update({"traceId": trace_id, "runId": run_id})
-        newman = _resolve_newman_executable()
+        newman = resolve_newman_executable()
         if newman is None:
             allow_missing = bool(step_with.get("allowMissingDependency", False))
             path = ctx["write_json"](
@@ -698,28 +886,155 @@ class MongoVerifyPlugin:
     type = "mongo.verify"
 
     def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        if not _live_mode_requested(step_with):
+            return {"ok": True, "missing": [], "mode": "stub"}
+
+        missing: list[str] = []
+        if not _connector_live_gate_enabled(ctx=ctx, connector="mongo"):
+            missing.append("CONTINUUM_ENABLE_LIVE_CONNECTORS or CONTINUUM_ENABLE_LIVE_MONGO")
+        uri = step_with.get("uri")
+        db_name = step_with.get("db")
+        if not isinstance(uri, str) or not uri.strip():
+            missing.append("with.uri")
+        if not isinstance(db_name, str) or not db_name.strip():
+            missing.append("with.db")
         try:
             import pymongo  # type: ignore  # noqa: F401
-            return {"ok": True, "missing": []}
         except Exception:
-            return {"ok": False, "missing": ["pymongo"]}
+            missing.append("pymongo")
+        return {"ok": not missing, "missing": sorted(set(missing)), "mode": "live"}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
         trace_id = str(ctx.get("vars", {}).get("traceId") or "")
         auto_filter = bool(step_with.get("autoFilterTraceId", False))
-        queries = step_with.get("queries") or []
+        queries = step_with.get("queries") if isinstance(step_with.get("queries"), list) else []
+        assertions = step_with.get("assert") if isinstance(step_with.get("assert"), list) else []
         applied = False
-        if isinstance(queries, list):
+
+        if not _live_mode_requested(step_with):
+            if isinstance(queries, list):
+                for query in queries:
+                    if not isinstance(query, dict):
+                        continue
+                    filter_obj = query.get("filter")
+                    if auto_filter and isinstance(filter_obj, dict) and "traceId" not in filter_obj:
+                        filter_obj["traceId"] = trace_id
+                        applied = True
+            payload = {
+                "ok": True,
+                "mode": "stub",
+                "queries": queries,
+                "traceId": trace_id,
+                "traceQueryApplied": applied,
+            }
+            path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "assertions.json", payload)
+            return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"traceQueryApplied": applied})
+
+        if not _connector_live_gate_enabled(ctx=ctx, connector="mongo"):
+            raise StepExecutionError(
+                "mongo.verify live mode requires CONTINUUM_ENABLE_LIVE_CONNECTORS=1 or CONTINUUM_ENABLE_LIVE_MONGO=1"
+            )
+        uri = step_with.get("uri")
+        db_name = step_with.get("db")
+        if not isinstance(uri, str) or not uri.strip():
+            raise StepExecutionError("mongo.verify live mode requires with.uri")
+        if not isinstance(db_name, str) or not db_name.strip():
+            raise StepExecutionError("mongo.verify live mode requires with.db")
+
+        try:
+            import pymongo  # type: ignore
+        except Exception as err:
+            raise StepExecutionError("mongo.verify live mode requires pymongo") from err
+
+        sample_limit = max(0, int(step_with.get("sampleLimit", 20)))
+        timeout_ms = max(1000, int(step_with.get("serverSelectionTimeoutMs", 5000)))
+
+        client = None
+        query_results: dict[str, Any] = {}
+        try:
+            client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=timeout_ms)  # type: ignore[attr-defined]
+            client.admin.command("ping")
+            database = client[str(db_name)]
+
             for query in queries:
                 if not isinstance(query, dict):
                     continue
-                filter_obj = query.get("filter")
-                if auto_filter and isinstance(filter_obj, dict) and "traceId" not in filter_obj:
-                    filter_obj["traceId"] = trace_id
+                query_name = str(query.get("name") or "").strip()
+                collection_name = str(query.get("collection") or "").strip()
+                if not query_name:
+                    raise StepExecutionError("mongo.verify query requires name")
+                if not collection_name:
+                    raise StepExecutionError(f"mongo.verify query '{query_name}' requires collection")
+                filter_obj = query.get("filter") if isinstance(query.get("filter"), dict) else {}
+                filter_payload = dict(filter_obj)
+                if auto_filter and trace_id and "traceId" not in filter_payload:
+                    filter_payload["traceId"] = trace_id
                     applied = True
-        payload = {"ok": True, "queries": queries, "traceId": trace_id, "traceQueryApplied": applied}
+                projection = query.get("projection") if isinstance(query.get("projection"), dict) else None
+                limit_raw = query.get("limit")
+                query_limit = sample_limit
+                if limit_raw is not None:
+                    try:
+                        query_limit = max(0, int(limit_raw))
+                    except Exception:
+                        query_limit = sample_limit
+
+                collection = database[collection_name]
+                count = int(collection.count_documents(filter_payload))
+                cursor = collection.find(filter_payload, projection)
+                docs: list[Any] = []
+                if query_limit > 0 and hasattr(cursor, "limit"):
+                    cursor = cursor.limit(query_limit)
+                for idx, doc in enumerate(cursor):
+                    if query_limit > 0 and not hasattr(cursor, "limit") and idx >= query_limit:
+                        break
+                    docs.append(_json_compatible(doc))
+                query_results[query_name] = {
+                    "collection": collection_name,
+                    "count": count,
+                    "filter": _json_compatible(filter_payload),
+                    "sample": docs,
+                }
+        except StepExecutionError:
+            raise
+        except Exception as err:
+            raise StepExecutionError(f"mongo.verify live execution failed: {err}") from err
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+        assertion_results: list[dict[str, Any]] = []
+        all_ok = True
+        for assertion in assertions:
+            if not isinstance(assertion, dict):
+                continue
+            query_name = str(assertion.get("query") or "")
+            op = str(assertion.get("op") or "eq")
+            expected = assertion.get("value", 0)
+            actual = int((query_results.get(query_name) or {}).get("count", 0))
+            ok = _compare_numeric(actual, op, expected)
+            assertion_results.append({"query": query_name, "op": op, "expected": expected, "actual": actual, "ok": ok})
+            all_ok = all_ok and ok
+
+        payload = {
+            "ok": all_ok,
+            "mode": "live",
+            "db": str(db_name),
+            "traceId": trace_id,
+            "traceQueryApplied": applied,
+            "queryResults": query_results,
+            "assertions": assertion_results,
+        }
         path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "assertions.json", payload)
-        return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"traceQueryApplied": applied})
+        return StepResult(
+            ok=all_ok,
+            details=payload,
+            evidence_paths=[path],
+            exports={"traceQueryApplied": applied, "mongoAssertionsOk": all_ok},
+        )
 
 
 class SqlVerifyPlugin:
@@ -785,14 +1100,57 @@ class JiraFetchPlugin:
     type = "jira.fetch"
 
     def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
-        missing = [k for k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN") if not ctx.get("env", {}).get(k)]
-        return {"ok": not missing, "missing": missing}
+        return _jira_preflight(step_with=step_with, ctx=ctx, require_issue_key=True)
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
-        issue_key = step_with.get("issueKey") or ctx["vars"].get("issueKey")
+        issue_key = str(step_with.get("issueKey") or ctx["vars"].get("issueKey") or "").strip() or None
         issue_payload = step_with.get("issue") if isinstance(step_with.get("issue"), dict) else {}
-        labels = [str(v).strip() for v in (issue_payload.get("labels") or []) if str(v).strip()]
-        components_raw = issue_payload.get("components") or []
+        labels: list[str] = []
+        components_raw: list[Any] = []
+        source = "scenario"
+        status_code: int | None = None
+        fetched: dict[str, Any] = {}
+        requested_live = _live_mode_requested(step_with)
+        if requested_live:
+            if not _connector_live_gate_enabled(ctx=ctx, connector="jira"):
+                raise StepExecutionError(
+                    "jira live mode requires CONTINUUM_ENABLE_LIVE_CONNECTORS=1 or CONTINUUM_ENABLE_LIVE_JIRA=1"
+                )
+            jira_cfg, missing = _jira_config(step_with, ctx)
+            if missing:
+                raise StepExecutionError(f"jira live mode missing configuration: {', '.join(missing)}")
+            if not issue_key:
+                raise StepExecutionError("jira.fetch live mode requires with.issueKey or vars.issueKey")
+            fields = step_with.get("fields")
+            if not isinstance(fields, list) or not fields:
+                fields = ["labels", "components", "summary", "status", "issuetype", "priority"]
+            fields_param = ",".join(str(v).strip() for v in fields if str(v).strip())
+            endpoint = f"/rest/api/2/issue/{quote(issue_key)}"
+            if fields_param:
+                endpoint = f"{endpoint}?{urlencode({'fields': fields_param})}"
+            status_code, fetched_payload = _jira_request_json(
+                method="GET",
+                base_url=jira_cfg["baseUrl"],
+                path=endpoint,
+                email=jira_cfg["email"],
+                token=jira_cfg["token"],
+                timeout_sec=int(jira_cfg["timeoutSec"]),
+            )
+            fields_payload = fetched_payload.get("fields") if isinstance(fetched_payload, dict) else {}
+            fields_payload = fields_payload if isinstance(fields_payload, dict) else {}
+            labels = [str(v).strip() for v in (fields_payload.get("labels") or []) if str(v).strip()]
+            components_raw = fields_payload.get("components") if isinstance(fields_payload.get("components"), list) else []
+            fetched = {
+                "summary": fields_payload.get("summary"),
+                "status": ((fields_payload.get("status") or {}).get("name") if isinstance(fields_payload.get("status"), dict) else fields_payload.get("status")),
+                "issueType": ((fields_payload.get("issuetype") or {}).get("name") if isinstance(fields_payload.get("issuetype"), dict) else fields_payload.get("issuetype")),
+                "priority": ((fields_payload.get("priority") or {}).get("name") if isinstance(fields_payload.get("priority"), dict) else fields_payload.get("priority")),
+            }
+            source = "jira-api"
+        else:
+            labels = [str(v).strip() for v in (issue_payload.get("labels") or []) if str(v).strip()]
+            components_raw = issue_payload.get("components") or []
+
         components: list[str] = []
         if isinstance(components_raw, list):
             for item in components_raw:
@@ -803,54 +1161,114 @@ class JiraFetchPlugin:
                 elif isinstance(item, str) and item.strip():
                     components.append(item.strip())
 
-        requirements_map = step_with.get("requirementsMap") if isinstance(step_with.get("requirementsMap"), dict) else {
-            "postman": ["run_postman"],
-            "mongo": ["verify_mongo"],
-            "sql": ["verify_sql"],
-            "logs": ["collect_logs"],
-            "jira": ["jira.comment", "jira.attach"],
-        }
-        required_steps: set[str] = {str(v).strip() for v in (step_with.get("requiredSteps") or []) if str(v).strip()}
-        tokens = [*labels, *components]
-        for token in tokens:
-            lower_token = token.lower()
-            for matcher, mapped in requirements_map.items():
-                if str(matcher).lower() not in lower_token:
-                    continue
-                if isinstance(mapped, list):
-                    for item in mapped:
-                        if isinstance(item, str) and item.strip():
-                            required_steps.add(item.strip())
+        required_steps = _infer_required_steps(step_with, labels=labels, components=components)
 
         details = {
             "issueKey": issue_key,
+            "live": requested_live,
+            "source": source,
+            "statusCode": status_code,
             "labels": labels,
             "components": components,
-            "requiredSteps": sorted(required_steps),
+            "requiredSteps": required_steps,
+            "issue": fetched,
         }
         path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "issue.json", details)
-        return StepResult(ok=True, details=details, evidence_paths=[path], exports={"requiredSteps": sorted(required_steps)})
+        return StepResult(ok=True, details=details, evidence_paths=[path], exports={"requiredSteps": required_steps})
 
 
 class JiraCommentPlugin:
     type = "jira.comment"
+
+    def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        return _jira_preflight(step_with=step_with, ctx=ctx, require_issue_key=True)
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
         run_id = str(ctx.get("run_id") or "")
         trace_id = str(ctx.get("vars", {}).get("traceId") or "")
         status = str(ctx.get("vars", {}).get("status") or "completed")
         body = str(step_with.get("body") or f"Run {run_id} finished with status {status}. Trace {trace_id}. Report attached.")
-        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "comment.json", {"ok": True, "body": body})
-        return StepResult(ok=True, details={"ok": True, "body": body}, evidence_paths=[path])
+        issue_key = str(step_with.get("issueKey") or ctx.get("vars", {}).get("issueKey") or "").strip() or None
+        requested_live = _live_mode_requested(step_with)
+        details: dict[str, Any] = {"ok": True, "body": body, "live": requested_live, "issueKey": issue_key}
+        if requested_live:
+            if not _connector_live_gate_enabled(ctx=ctx, connector="jira"):
+                raise StepExecutionError(
+                    "jira live mode requires CONTINUUM_ENABLE_LIVE_CONNECTORS=1 or CONTINUUM_ENABLE_LIVE_JIRA=1"
+                )
+            jira_cfg, missing = _jira_config(step_with, ctx)
+            if missing:
+                raise StepExecutionError(f"jira live mode missing configuration: {', '.join(missing)}")
+            if not issue_key:
+                raise StepExecutionError("jira.comment live mode requires with.issueKey or vars.issueKey")
+            status_code, payload = _jira_request_json(
+                method="POST",
+                base_url=jira_cfg["baseUrl"],
+                path=f"/rest/api/2/issue/{quote(issue_key)}/comment",
+                email=jira_cfg["email"],
+                token=jira_cfg["token"],
+                timeout_sec=int(jira_cfg["timeoutSec"]),
+                payload={"body": body},
+            )
+            details.update(
+                {
+                    "statusCode": status_code,
+                    "commentId": payload.get("id") if isinstance(payload, dict) else None,
+                }
+            )
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "comment.json", details)
+        return StepResult(ok=True, details=details, evidence_paths=[path])
 
 
 class JiraAttachPlugin:
     type = "jira.attach"
 
+    def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        return _jira_preflight(step_with=step_with, ctx=ctx, require_issue_key=True)
+
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
         files = resolve_attach_files(step_with, ctx["run_dir"])
-        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "resolved_files.json", {"files": files})
-        return StepResult(ok=bool(files), details={"files": files}, evidence_paths=[path])
+        issue_key = str(step_with.get("issueKey") or ctx.get("vars", {}).get("issueKey") or "").strip() or None
+        requested_live = _live_mode_requested(step_with)
+        details: dict[str, Any] = {"files": files, "live": requested_live, "issueKey": issue_key}
+        if requested_live:
+            if not _connector_live_gate_enabled(ctx=ctx, connector="jira"):
+                raise StepExecutionError(
+                    "jira live mode requires CONTINUUM_ENABLE_LIVE_CONNECTORS=1 or CONTINUUM_ENABLE_LIVE_JIRA=1"
+                )
+            jira_cfg, missing = _jira_config(step_with, ctx)
+            if missing:
+                raise StepExecutionError(f"jira live mode missing configuration: {', '.join(missing)}")
+            if not issue_key:
+                raise StepExecutionError("jira.attach live mode requires with.issueKey or vars.issueKey")
+            max_bytes = max(1, int(step_with.get("maxBytesPerFile", 10_000_000)))
+            uploaded: list[dict[str, Any]] = []
+            skipped: list[dict[str, Any]] = []
+            for file_path in files:
+                path_obj = Path(file_path)
+                size = path_obj.stat().st_size if path_obj.exists() else 0
+                if size > max_bytes:
+                    skipped.append({"path": file_path, "reason": "max-bytes", "size": size})
+                    continue
+                status_code, payload = _jira_request_attachment(
+                    base_url=jira_cfg["baseUrl"],
+                    issue_key=issue_key,
+                    file_path=file_path,
+                    email=jira_cfg["email"],
+                    token=jira_cfg["token"],
+                    timeout_sec=int(jira_cfg["timeoutSec"]),
+                )
+                attachment_payload = payload if isinstance(payload, list) else [payload]
+                attachment_id = None
+                if attachment_payload and isinstance(attachment_payload[0], dict):
+                    attachment_id = attachment_payload[0].get("id")
+                uploaded.append({"path": file_path, "statusCode": status_code, "attachmentId": attachment_id})
+            details.update({"uploaded": uploaded, "skipped": skipped})
+            ok = bool(uploaded)
+        else:
+            ok = bool(files)
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "resolved_files.json", details)
+        return StepResult(ok=ok, details=details, evidence_paths=[path])
 
 
 class GitBranchPlugin:
