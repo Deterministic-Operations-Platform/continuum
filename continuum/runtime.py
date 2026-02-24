@@ -404,6 +404,10 @@ class DeterministicRuntime:
                 summary=safe_summary,
                 manifest_payload=manifest_payload,
             )
+            try:
+                ensure_report(run_dir)
+            except Exception:
+                pass
 
             policy_post = evaluate_policy_post(policy=policy_config, scenario=scenario, run_dir=run_dir)
             policy_results["post"] = redactor.redact(policy_post)

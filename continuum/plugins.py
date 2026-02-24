@@ -1356,8 +1356,10 @@ class JiraPublishPlugin:
         files = resolve_attach_files({"files": attach}, str(run_dir)) if attach else []
         report_url = str(step_with.get("reportUrl") or "").strip()
 
+        run_id = str(ctx.get("run_id") or "").strip()
         comment_lines = [
             "Continuum provable run summary",
+            f"- runId: {run_id or 'n/a'}",
             f"- status: {status}",
             f"- traceId: {trace_id or 'n/a'}",
             f"- policy.ok: {policy_ok}",

@@ -100,7 +100,9 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
         signature_hex = str(signature.get("signature") or "")
         signature_key_id = str(signature.get("keyId") or "")
 
-    policy_state = "PASS" if bool(policy.get("ok")) else "FAIL"
+    policy_ok = bool(policy.get("ok"))
+    policy_state = "PASS" if policy_ok else "FAIL"
+    policy_gate_label = "PASS" if policy_ok else "FAIL"
     policy_missing_text = ""
     if gate_missing:
         policy_missing_text = f"(missing: {', '.join(str(v) for v in gate_missing)})"
