@@ -213,15 +213,20 @@ def _parse_steps(raw_steps: list[Any], *, label: str) -> list[ScenarioStep]:
 
 def load_scenario(path: str | Path) -> Scenario:
     scenario_path = Path(path)
-    text = scenario_path.read_text(encoding="utf-8")
-    suffix = scenario_path.suffix.lower()
-    if suffix == ".json":
-        data = json.loads(text)
-    elif suffix in {".yaml", ".yml"}:
-        data = yaml.safe_load(text)
-    else:
-        raise ScenarioValidationError("Scenario must be .json, .yaml, or .yml")
+    data = load_scenario_document(scenario_path)
     if not isinstance(data, dict):
         raise ScenarioValidationError("Scenario document must be a mapping")
 
     return Scenario.from_mapping(data)
+
+
+def load_scenario_document(path: str | Path) -> dict[str, Any] | list[Any] | Any:
+    scenario_path = Path(path)
+    text = scenario_path.read_text(encoding="utf-8")
+    suffix = scenario_path.suffix.lower()
+    if suffix == ".json":
+        return json.loads(text)
+    elif suffix in {".yaml", ".yml"}:
+        return yaml.safe_load(text)
+    else:
+        raise ScenarioValidationError("Scenario must be .json, .yaml, or .yml")

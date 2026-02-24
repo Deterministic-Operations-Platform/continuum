@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from continuum import DeterministicRuntime, EvidenceCollector, PluginRegistry, Scenario, ScenarioStep, StepResult
-from continuum.plugins import JiraFetchPlugin, SqlVerifyPlugin
+from continuum.plugins import HttpRequestPlugin, JiraFetchPlugin, MongoDbVerifyPlugin, SqlVerifyPlugin
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -157,6 +157,37 @@ class TrustAndConnectorTests(unittest.TestCase):
         required = set(jira_result.details["requiredSteps"])
         self.assertIn("run_postman", required)
         self.assertIn("verify_mongo", required)
+
+
+    def test_http_request_and_mongodb_verify_plugins(self) -> None:
+        step_dir = REPO_ROOT / "runs" / "test-http-mongodb-plugin"
+        self.addCleanup(lambda: shutil.rmtree(step_dir, ignore_errors=True))
+
+        def _ctx_step_dir(index: int, name: str) -> str:
+            return str(step_dir / "evidence" / f"{index + 1:02d}-{name}")
+
+        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
+            output = Path(step_path) / filename
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            return str(output)
+
+        ctx = {"step_dir": _ctx_step_dir, "write_json": _ctx_write_json, "vars": {"traceId": "trace-1"}, "run_id": "plugin-test", "run_dir": str(step_dir)}
+        http_result = HttpRequestPlugin().run(
+            step_name="http-check",
+            step_with={"url": "https://example.com", "expectStatus": 200, "timeoutSec": 10},
+            ctx=ctx,
+            step_index=0,
+        )
+        self.assertTrue(http_result.ok)
+        mongo_result = MongoDbVerifyPlugin().run(
+            step_name="mongo-check",
+            step_with={"autoFilterTraceId": True, "queries": [{"filter": {"status": "ok"}}]},
+            ctx=ctx,
+            step_index=1,
+        )
+        self.assertTrue(mongo_result.ok)
+        self.assertTrue(mongo_result.details["traceQueryApplied"])
 
 
 if __name__ == "__main__":
