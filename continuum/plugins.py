@@ -506,6 +506,71 @@ class HttpHealthPlugin:
         return StepResult(ok=ok, details=details, evidence_paths=[path])
 
 
+
+
+class HttpRequestPlugin:
+    type = "http.request"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        url = step_with.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise StepExecutionError("http.request requires with.url")
+        method = str(step_with.get("method") or "GET").upper()
+        headers = dict(step_with.get("headers") or {})
+        timeout_sec = int(step_with.get("timeoutSec", 30))
+        expect_status = step_with.get("expectStatus")
+        data = step_with.get("json")
+
+        request_body = None
+        if data is not None:
+            request_body = json.dumps(data).encode("utf-8")
+            headers.setdefault("Content-Type", "application/json")
+
+        req = urllib.request.Request(url=url, method=method, headers={str(k): str(v) for k, v in headers.items()}, data=request_body)
+        ok = False
+        status = None
+        body = ""
+        error = None
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_sec) as response:
+                status = int(response.status)
+                body = response.read().decode("utf-8", errors="replace")
+                ok = True
+        except urllib.error.HTTPError as err:
+            status = int(err.code)
+            body = err.read().decode("utf-8", errors="replace")
+            error = str(err)
+        except Exception as err:
+            error = str(err)
+
+        if expect_status is not None:
+            ok = ok and int(status or 0) == int(expect_status)
+        else:
+            ok = ok and status is not None and 200 <= int(status) < 300
+
+        details = {"ok": ok, "url": url, "method": method, "status": status, "expectStatus": expect_status, "error": error}
+        step_dir = Path(ctx["step_dir"](step_index, step_name))
+        step_dir.mkdir(parents=True, exist_ok=True)
+        body_path = step_dir / "response.body.txt"
+        body_path.write_text(body, encoding="utf-8")
+        details_path = ctx["write_json"](str(step_dir), "response.json", details)
+        return StepResult(ok=ok, details=details, evidence_paths=[details_path, str(body_path)], exports={"httpStatus": status})
+
+
+class MongoDbVerifyPlugin:
+    type = "mongodb.verify"
+
+    def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+        try:
+            import pymongo  # type: ignore  # noqa: F401
+            return {"ok": True, "missing": []}
+        except Exception:
+            return {"ok": False, "missing": ["pymongo"]}
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        return MongoVerifyPlugin().run(step_name=step_name, step_with=step_with, ctx=ctx, step_index=step_index)
+
+
 class PreflightChecklistPlugin:
     type = "preflight.checklist"
 
@@ -1122,9 +1187,11 @@ class PluginRegistry:
             AppLauncherEnsurePlugin(),
             AppLauncherSessionStopPlugin(),
             HttpHealthPlugin(),
+            HttpRequestPlugin(),
             PreflightChecklistPlugin(),
             PostmanRunPlugin(),
             MongoVerifyPlugin(),
+            MongoDbVerifyPlugin(),
             SqlVerifyPlugin(),
             JiraFetchPlugin(),
             JiraCommentPlugin(),

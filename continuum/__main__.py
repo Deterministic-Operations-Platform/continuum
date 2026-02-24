@@ -12,6 +12,8 @@ except ModuleNotFoundError:
 from continuum import __version__, ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
 from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
+from continuum.scenario import load_scenario_document
+from continuum.schema import validate_scenario_schema
 
 
 def _status_payload() -> dict[str, Any]:
@@ -32,7 +34,7 @@ def _status_payload() -> dict[str, Any]:
         "cwd": str(Path.cwd()),
         "runs_dir": str(runs_dir.resolve()),
         "runs_dir_writable": writable,
-        "commands": ["status", "run", "golden-run", "validate", "plan", "publish"],
+        "commands": ["status", "run", "golden-run", "validate", "plan", "publish", "ci"],
         "plugins": sorted(PluginRegistry().available_plugin_names()),
     }
 
@@ -87,15 +89,24 @@ def main() -> None:
     publish.add_argument("--run-id", dest="run_id", required=True, help="Run id to publish from runs/<run-id>")
     publish.add_argument("--runs-dir", dest="runs_dir", default="runs", help="Directory containing run bundles")
     publish.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
-    publish.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="Number of published runs to keep")
+    publish.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="How many published runs to keep")
+
+    ci = sub.add_parser("ci", help="Validate + run + publish in CI mode")
+    ci.add_argument("scenario", help="Path to scenario YAML/JSON")
+    ci.add_argument("--run-id", dest="run_id", default=None, help="Optional run id for deterministic replay")
+    ci.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
+    ci.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="How many published runs to keep")
+    ci.add_argument("--max-parallel", dest="max_parallel", type=int, default=4, help="Maximum parallel step workers")
+    ci.add_argument("--policy-file", dest="policy_file", default=None, help="Path to policy.yaml for evidence gate checks")
 
     args = parser.parse_args()
+
     if args.cmd == "status":
         payload = _status_payload()
         if args.as_json:
             print(json.dumps(payload, indent=2, sort_keys=True))
             return
-        style = "bold green" if payload["status"] == "ready" else "bold yellow"
+        style = "green" if payload["status"] == "ready" else "yellow"
         rich_print(f"[{style}]Continuum[/{style}] deterministic runtime ready")
         rich_print(f"Version: [bold]{payload['version']}[/bold]")
         rich_print(f"Runs dir: [bold]{payload['runs_dir']}[/bold] (writable={payload['runs_dir_writable']})")
@@ -181,6 +192,16 @@ def main() -> None:
         return
 
     if args.cmd == "validate":
+        document = load_scenario_document(args.scenario)
+        if not isinstance(document, dict):
+            rich_print("[red]ERROR[/red] scenario document must be a mapping")
+            raise SystemExit(1)
+        schema_errors = validate_scenario_schema(document)
+        if schema_errors:
+            for error in schema_errors:
+                rich_print(f"[red]ERROR[/red] schema: {error}")
+            raise SystemExit(1)
+
         scenario = load_scenario(args.scenario)
         errors, warnings = validate_scenario(scenario, plugin_registry=PluginRegistry())
         for warning in warnings:
@@ -189,7 +210,7 @@ def main() -> None:
             for error in errors:
                 rich_print(f"[red]ERROR[/red] {error}")
             raise SystemExit(1)
-        rich_print("[green]OK[/green] scenario validates")
+        rich_print("[green]OK[/green] scenario validates against schema and runtime checks")
         return
 
     if args.cmd == "plan":
@@ -214,6 +235,49 @@ def main() -> None:
         )
         rich_print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
         rich_print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
+        return
+
+    if args.cmd == "ci":
+        scenario_path = Path(args.scenario)
+        document = load_scenario_document(scenario_path)
+        if not isinstance(document, dict):
+            rich_print("[red]CI FAIL[/red] scenario document must be a mapping")
+            raise SystemExit(1)
+        schema_errors = validate_scenario_schema(document)
+        if schema_errors:
+            for error in schema_errors:
+                rich_print(f"[red]CI FAIL[/red] schema: {error}")
+            raise SystemExit(1)
+
+        scenario = load_scenario(scenario_path)
+        errors, warnings = validate_scenario(scenario, plugin_registry=PluginRegistry())
+        for warning in warnings:
+            rich_print(f"[yellow]WARN[/yellow] {warning}")
+        if errors:
+            for error in errors:
+                rich_print(f"[red]CI FAIL[/red] {error}")
+            raise SystemExit(1)
+
+        try:
+            scenario_text = scenario_path.read_text(encoding="utf-8")
+            runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
+            summary = runtime.execute(
+                scenario=scenario,
+                scenario_source=scenario_path,
+                scenario_text=scenario_text,
+                run_id=args.run_id,
+                max_parallel=int(args.max_parallel),
+                cli_vars={"policyFile": args.policy_file} if args.policy_file else None,
+            )
+            target = publish_run(run_id=summary["run_id"], runs_dir=Path("runs"), site_dir=Path(args.site_dir), keep_runs=args.keep_runs)
+            rich_print(f"[green]CI published[/green] {target}")
+            if summary["failure"]:
+                rich_print(f"[red]CI FAIL[/red] {summary['failure']['message']}")
+                raise SystemExit(1)
+            rich_print(f"[green]CI PASS[/green] run {summary['run_id']}")
+        except ContinuumError as err:
+            rich_print(f"[bold red]CI FAIL[/bold red]: {err} ({err.failure_class.value})")
+            raise SystemExit(1) from err
         return
 
     parser.print_help()

@@ -978,7 +978,7 @@ def validate_scenario(scenario: Scenario, *, plugin_registry: PluginRegistry, en
 
         if step.type == "postman.run" and not bool(step.with_.get("allowMissingDependency", False)) and not shutil.which("newman"):
             errors.append(f"step {index} ({step.name}): missing dependency 'newman'")
-        if step.type == "mongo.verify":
+        if step.type in {"mongo.verify", "mongodb.verify"}:
             try:
                 import pymongo  # type: ignore  # noqa: F401
             except Exception:

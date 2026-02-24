@@ -27,13 +27,16 @@ continuum status
 - One command for the FedNow/RTPay golden path: preflight, AppLauncher ensure, Postman run, Mongo verify, log correlation, Jira comment/attach, and publish-ready evidence.
 
 `continuum validate <scenario>`
-- Validate scenario contract, plugin availability, and template references without executing.
+- Validate scenario against the canonical schema plus runtime/plugin preflight checks without executing.
+
+`continuum ci <scenario> [--run-id ...]`
+- CI workflow mode: validate, execute, and publish evidence in one command with non-zero exit on failures.
 
 `continuum plan <scenario> [--run-id ...]`
 - Build and print deterministic execution plan. If `--run-id` is given, writes `runs/<run-id>/plan.json`.
 
 `continuum publish --run-id <id> [--runs-dir runs] [--site-dir site] [--keep-runs 25]`
-- Publish a run bundle to static HTML/JSON under `site/`.
+- Publish a run bundle to static HTML/JSON under `site/` using the shareable Evidence Viewer index (trace/git compare metadata).
 
 ## Canonical scenario schema (v0.1)
 
@@ -79,6 +82,7 @@ Every run writes:
 `events.log` may also be present depending on plugin/runtime behavior.
 - `events.log` is append-only with hash chaining (`prevHash` -> `hash`) for tamper-evident audit history.
 - `manifest.json` includes per-artifact checksums plus an artifact-set checksum, and `bundle_signature.json` + `manifest.sha256` provide immutable integrity evidence.
+- `site/index.html` is a shareable Evidence Viewer with searchable run comparison fields (`status`, `traceId`, `gitHead`).
 
 ## Run example
 ```bash

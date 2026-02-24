@@ -106,6 +106,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             "traceId": item.trace_id,
             "gitHead": item.git_head,
             "report": item.report_path,
+            "summary": f"runs/{item.run_id}/summary.json",
+            "context": f"runs/{item.run_id}/context.json",
         }
         for item in runs
     ]
@@ -117,8 +119,11 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             "<tr>"
             f"<td><a href='runs/{escape(item.run_id)}/report.html'>{escape(item.run_id)}</a></td>"
             f"<td>{escape(item.status)}</td>"
+            f"<td>{escape(item.trace_id)}</td>"
+            f"<td><code>{escape(item.git_head)}</code></td>"
             f"<td>{escape(item.started_at)}</td>"
             f"<td>{escape(item.ended_at)}</td>"
+            f"<td><a href='runs/{escape(item.run_id)}/summary.json'>summary</a> · <a href='runs/{escape(item.run_id)}/context.json'>context</a></td>"
             "</tr>"
         )
     html = """<!doctype html>
@@ -129,20 +134,34 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
   <title>Continuum Runs</title>
   <style>
     body {{ font-family: Arial, sans-serif; margin: 2rem; }}
+    .controls {{ display: flex; gap: 12px; margin-bottom: 10px; }}
+    input {{ padding: 0.35rem; min-width: 260px; }}
     table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border: 1px solid #ddd; padding: 0.5rem; text-align: left; }}
+    th, td {{ border: 1px solid #ddd; padding: 0.5rem; text-align: left; vertical-align: top; }}
     th {{ background: #f4f4f4; }}
+    code {{ font-size: 12px; }}
   </style>
 </head>
 <body>
-  <h1>Continuum Runs</h1>
-  <p>Recent published runs with direct report links.</p>
-  <table>
-    <thead><tr><th>Run ID</th><th>Status</th><th>Started</th><th>Ended</th></tr></thead>
+  <h1>Continuum Evidence Viewer</h1>
+  <p>Shareable run index with trace/git metadata for quick comparison.</p>
+  <div class='controls'>
+    <input id='q' type='search' placeholder='Filter by run id, status, trace id, or git head' oninput='filterRows()'/>
+  </div>
+  <table id='runs'>
+    <thead><tr><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
     <tbody>
       {rows}
     </tbody>
   </table>
+  <script>
+    function filterRows() {{
+      const q = (document.getElementById('q').value || '').toLowerCase();
+      for (const row of document.querySelectorAll('#runs tbody tr')) {{
+        row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
+      }}
+    }}
+  </script>
 </body>
 </html>
 """.format(rows="\n      ".join(rows))

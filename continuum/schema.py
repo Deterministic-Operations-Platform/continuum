@@ -1,0 +1,74 @@
+"""Canonical scenario schema validation helpers."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def validate_scenario_schema(document: dict[str, Any]) -> list[str]:
+    """Return deterministic schema errors for a raw scenario mapping."""
+    errors: list[str] = []
+    required = ("name", "rail", "steps")
+    for field in required:
+        if field not in document:
+            errors.append(f"missing required field '{field}'")
+
+    _expect_type(errors, document, "name", str)
+    _expect_type(errors, document, "rail", str)
+    _expect_type(errors, document, "vars", dict, optional=True)
+    _expect_type(errors, document, "services", dict, optional=True)
+    _expect_type(errors, document, "governance", dict, optional=True)
+    _expect_type(errors, document, "cleanup_steps", list, optional=True)
+
+    steps = document.get("steps")
+    if steps is not None:
+        if not isinstance(steps, list):
+            errors.append("field 'steps' must be of type array")
+        elif not steps:
+            errors.append("field 'steps' must contain at least one step")
+        else:
+            for index, step in enumerate(steps):
+                errors.extend(_validate_step(step, index=index, label="steps"))
+
+    cleanup_steps = document.get("cleanup_steps")
+    if isinstance(cleanup_steps, list):
+        for index, step in enumerate(cleanup_steps):
+            errors.extend(_validate_step(step, index=index, label="cleanup_steps"))
+
+    return sorted(set(errors))
+
+
+def _expect_type(errors: list[str], document: dict[str, Any], key: str, expected: type[Any], *, optional: bool = False) -> None:
+    value = document.get(key)
+    if value is None:
+        if not optional and key in document:
+            errors.append(f"field '{key}' must be of type {expected.__name__}")
+        return
+    if not isinstance(value, expected):
+        expected_label = "array" if expected is list else "object" if expected is dict else expected.__name__
+        errors.append(f"field '{key}' must be of type {expected_label}")
+
+
+def _validate_step(step: Any, *, index: int, label: str) -> list[str]:
+    errors: list[str] = []
+    prefix = f"{label}[{index}]"
+    if not isinstance(step, dict):
+        return [f"{prefix} must be an object"]
+    for required in ("name", "type"):
+        if required not in step:
+            errors.append(f"{prefix} missing required field '{required}'")
+
+    if "name" in step and not isinstance(step.get("name"), str):
+        errors.append(f"{prefix}.name must be a string")
+    if "type" in step and not isinstance(step.get("type"), str):
+        errors.append(f"{prefix}.type must be a string")
+    if "with" in step and not isinstance(step.get("with"), dict):
+        errors.append(f"{prefix}.with must be an object")
+    if "publish" in step and not isinstance(step.get("publish"), dict):
+        errors.append(f"{prefix}.publish must be an object")
+    if "dependsOn" in step and not isinstance(step.get("dependsOn"), list):
+        errors.append(f"{prefix}.dependsOn must be an array")
+    if "retry" in step and not isinstance(step.get("retry"), dict):
+        errors.append(f"{prefix}.retry must be an object")
+    return errors
+
