@@ -129,9 +129,8 @@ continuum golden-run --actor release.user --role release-manager
 
 ## GitHub repository transfer (CLI)
 
-If you need to transfer this repository from a personal namespace to an organization, use the GitHub REST API through `gh api`:
-
 ```bash
+# Transfer repo to the org "Deterministic-Operations-Platform"
 gh auth login
 
 gh api \
@@ -140,28 +139,15 @@ gh api \
   repos/nnabdelshahid/continuum/transfer \
   -f new_owner="Deterministic-Operations-Platform" \
   -f new_name="continuum"
+
+# Update local git remote to new org/repo
+git remote set-url origin https://github.com/Deterministic-Operations-Platform/continuum.git
+# (or SSH)
+# git remote set-url origin git@github.com:Deterministic-Operations-Platform/continuum.git
 ```
 
-Then update your local remote URL:
+If your clone does not already have an `origin` remote, use:
 
 ```bash
-git remote set-url origin git@github.com:Deterministic-Operations-Platform/continuum.git
-# or HTTPS:
-# git remote set-url origin https://github.com/Deterministic-Operations-Platform/continuum.git
-
-# if this clone does not have an origin yet:
 git remote add origin https://github.com/Deterministic-Operations-Platform/continuum.git
 ```
-
-Notes:
-- `new_name` is optional if `continuum` is available in the destination org.
-- The caller needs admin access to the source repo and permission to create repos in the target org.
-- Some org policies require owner acceptance before transfer completion.
-- If the repo does not appear in the destination org immediately, check transfer status and pending acceptance:
-
-```bash
-gh repo view Deterministic-Operations-Platform/continuum
-gh api repos/nnabdelshahid/continuum
-```
-
-- If transfer acceptance is required by org policy, an org owner must approve it in the GitHub UI.
