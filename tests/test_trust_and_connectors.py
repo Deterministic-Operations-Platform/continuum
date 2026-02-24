@@ -16,6 +16,7 @@ from continuum.plugins import (
     JiraAttachPlugin,
     JiraCommentPlugin,
     JiraFetchPlugin,
+    JiraPublishPlugin,
     MongoDbVerifyPlugin,
     MongoVerifyPlugin,
     SqlVerifyPlugin,
@@ -370,6 +371,86 @@ class TrustAndConnectorTests(unittest.TestCase):
         self.assertEqual(attach_result.details["uploaded"][0]["attachmentId"], "a-1")
         self.assertTrue(all(item["auth"].startswith("Basic ") for item in requests))
         self.assertNotIn("top-secret-token", json.dumps(comment_result.details))
+
+
+    def test_jira_publish_dry_run_and_live(self) -> None:
+        step_dir = REPO_ROOT / "runs" / "test-jira-publish"
+        self.addCleanup(lambda: shutil.rmtree(step_dir, ignore_errors=True))
+        step_dir.mkdir(parents=True, exist_ok=True)
+        (step_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "status": "succeeded",
+                    "traceId": "trace-jira-pub",
+                    "policy": {"ok": True, "post": {"ok": True, "violations": []}, "missing": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (step_dir / "manifest.json").write_text(json.dumps({"git_head": "abc"}), encoding="utf-8")
+        (step_dir / "bundle_signature.json").write_text(
+            json.dumps({"keyId": "ci", "manifest_sha256": "deadbeef", "signature": "cafebabe"}), encoding="utf-8"
+        )
+        (step_dir / "report.html").write_text("<h1>ok</h1>", encoding="utf-8")
+
+        def _ctx_step_dir(index: int, name: str) -> str:
+            return str(step_dir / "evidence" / f"{index + 1:02d}-{name}")
+
+        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
+            output = Path(step_path) / filename
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            return str(output)
+
+        dry_ctx = {
+            "step_dir": _ctx_step_dir,
+            "write_json": _ctx_write_json,
+            "vars": {},
+            "run_id": "jira-publish",
+            "run_dir": str(step_dir),
+            "env": {},
+        }
+        dry_result = JiraPublishPlugin().run(
+            step_name="jira-publish",
+            step_with={"issueKey": "PAY-77", "attach": ["report.html"]},
+            ctx=dry_ctx,
+            step_index=0,
+        )
+        self.assertTrue(dry_result.ok)
+        self.assertFalse(dry_result.details["performed"])
+
+        requests: list[dict[str, str]] = []
+
+        def _fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+            method = request.get_method()
+            url = request.full_url
+            requests.append({"method": method, "url": url})
+            if method == "POST" and url.endswith("/comment"):
+                return _FakeHttpResponse(status=201, payload={"id": "comment-1"})
+            if method == "POST" and url.endswith("/attachments"):
+                return _FakeHttpResponse(status=200, payload=[{"id": "attach-1"}])
+            raise AssertionError(f"Unexpected Jira request: {method} {url}")
+
+        live_ctx = {
+            **dry_ctx,
+            "env": {
+                "JIRA_BASE_URL": "https://jira.example.test",
+                "JIRA_EMAIL": "engineer@example.test",
+                "JIRA_API_TOKEN": "secret",
+            },
+        }
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            live_result = JiraPublishPlugin().run(
+                step_name="jira-publish-live",
+                step_with={"issueKey": "PAY-77", "attach": ["report.html", "summary.json"]},
+                ctx=live_ctx,
+                step_index=1,
+            )
+        self.assertTrue(live_result.ok)
+        self.assertTrue(live_result.details["performed"])
+        self.assertEqual(live_result.details["commentId"], "comment-1")
+        self.assertEqual(len(live_result.details["uploaded"]), 2)
+        self.assertEqual(len(requests), 3)
 
     def test_live_connectors_require_runtime_gate(self) -> None:
         step_dir = REPO_ROOT / "runs" / "test-live-gate-required"

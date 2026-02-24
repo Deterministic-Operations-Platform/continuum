@@ -93,10 +93,12 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     signature_manifest_hash = ""
     signature_key_id = ""
     signature_hex = ""
+    signature_key_id = ""
     if isinstance(signature, dict):
         signature_manifest_hash = str(signature.get("manifest_sha256") or "")
         signature_key_id = str(signature.get("keyId") or "")
         signature_hex = str(signature.get("signature") or "")
+        signature_key_id = str(signature.get("keyId") or "")
 
     policy_state = "PASS" if bool(policy.get("ok")) else "FAIL"
     policy_missing_text = ""
@@ -480,21 +482,16 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
 
     <section>
       <h2>Integrity</h2>
-      <ul>
-        <li><b>Policy Gate:</b> __POLICY_STATE__ __POLICY_MISSING__</li>
-        <li><b>Bundle Signature:</b> __SIGNATURE_SUMMARY__</li>
-      </ul>
-    </section>
-
-    <section>
-      <h2>Tamper Evidence</h2>
-      <div class='mini-panel'>
-        <div class='title'>Manifest Hash</div>
-        <code class='inline-block'>__MANIFEST_HASH__</code>
-      </div>
-      <div class='mini-panel' style='margin-top: 10px;'>
-        <div class='title'>Bundle Signature</div>
-        <code class='inline-block'>__BUNDLE_SIGNATURE__</code>
+      <div class='split'>
+        <div class='mini-panel'>
+          <div class='title'>Policy Missing</div>
+          <div>__POLICY_NOTES__</div>
+        </div>
+        <div class='mini-panel'>
+          <div class='title'>Signature Metadata</div>
+          <div>keyId: <code class='inline-block'>__SIGNATURE_KEY_ID__</code></div>
+          <div style='margin-top: 8px;'>manifest_sha256: <code class='inline-block'>__MANIFEST_HASH__</code></div>
+        </div>
       </div>
     </section>
 
@@ -531,6 +528,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     html = html.replace("__SIGNATURE_SUMMARY__", escape(signature_summary))
     html = html.replace("__FAILURE_MESSAGE__", escape(str(failure.get("message") or "none")))
     html = html.replace("__MANIFEST_HASH__", escape(signature_manifest_hash or "n/a"))
+    html = html.replace("__SIGNATURE_KEY_ID__", escape(signature_key_id or "n/a"))
     html = html.replace("__BUNDLE_SIGNATURE__", escape(signature_hex or "n/a"))
     html = html.replace("__ARTIFACT_ROWS__", "\n            ".join(artifact_rows) or "<tr><td colspan='3'>No artifacts listed.</td></tr>")
     return html
