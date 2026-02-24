@@ -1,7 +1,9 @@
 import json
+import os
 import shutil
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from continuum import DeterministicRuntime, EvidenceCollector, PluginRegistry, Scenario, ScenarioStep, StepResult
 
@@ -48,7 +50,6 @@ class PolicyGateTests(unittest.TestCase):
         self.assertEqual(summary["status"], "failed")
         self.assertIn("Policy gate (after execution) failed", summary["failure"]["message"])
         self.assertTrue(any("postman-report" in str(item) for item in summary["policy"]["post"]["violations"]))
-        self.assertTrue((run_dir / "bundle_signature.json").exists())
         self.assertTrue((run_dir / "report.html").exists())
 
     def test_policy_gate_fails_before_execution_when_policy_invalid(self) -> None:
@@ -86,6 +87,66 @@ class PolicyGateTests(unittest.TestCase):
         persisted = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual(persisted["status"], "failed")
         self.assertIn("policy.required_evidence", persisted["failure"]["message"])
+
+    def test_scenario_policy_requires_files_and_marks_run_failed(self) -> None:
+        run_id = "test-scenario-policy-missing"
+        run_dir = REPO_ROOT / "runs" / run_id
+        self.addCleanup(lambda: shutil.rmtree(run_dir, ignore_errors=True))
+
+        scenario = Scenario(
+            name="policy-scenario",
+            rail="test",
+            vars={},
+            policy={
+                "requires": {
+                    "files": [
+                        "summary.json",
+                        "manifest.json",
+                        "report.html",
+                        "evidence/**/missing-required.json",
+                    ]
+                }
+            },
+            steps=(ScenarioStep(name="noop", key="01_noop", type="test.noop", with_={}),),
+            cleanup_steps=(),
+        )
+        runtime = DeterministicRuntime(plugin_registry=PluginRegistry([_NoopPlugin()]), evidence_collector=EvidenceCollector())
+        summary = runtime.execute(
+            scenario=scenario,
+            scenario_source=Path("tests/fixture.yaml"),
+            scenario_text="name: policy-scenario",
+            run_id=run_id,
+        )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertFalse(summary["policy"]["ok"])
+        self.assertIn("evidence/**/missing-required.json", summary["policy"]["missing"])
+        self.assertIn("Policy gate failed", summary["failure"]["message"])
+
+    def test_scenario_policy_can_require_signature(self) -> None:
+        run_id = "test-scenario-policy-signature"
+        run_dir = REPO_ROOT / "runs" / run_id
+        self.addCleanup(lambda: shutil.rmtree(run_dir, ignore_errors=True))
+
+        scenario = Scenario(
+            name="policy-signature",
+            rail="test",
+            vars={},
+            policy={"requires": {"signature": True, "files": ["summary.json", "manifest.json", "report.html"]}},
+            steps=(ScenarioStep(name="noop", key="01_noop", type="test.noop", with_={}),),
+            cleanup_steps=(),
+        )
+        runtime = DeterministicRuntime(plugin_registry=PluginRegistry([_NoopPlugin()]), evidence_collector=EvidenceCollector())
+        with patch.dict(os.environ, {"CONTINUUM_SIGNING_KEY": "", "CONTINUUM_BUNDLE_HMAC_KEY": ""}, clear=False):
+            summary = runtime.execute(
+                scenario=scenario,
+                scenario_source=Path("tests/fixture.yaml"),
+                scenario_text="name: policy-signature",
+                run_id=run_id,
+            )
+
+        self.assertEqual(summary["status"], "failed")
+        self.assertIn("bundle_signature.json", summary["policy"]["missing"])
 
 
 if __name__ == "__main__":

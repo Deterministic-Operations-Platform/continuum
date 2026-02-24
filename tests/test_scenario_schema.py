@@ -25,6 +25,12 @@ services:
     type: applauncher
     command: python
     args: ["-m", "http.server", "8129"]
+policy:
+  requires:
+    signature: true
+    files:
+      - summary.json
+      - report.html
 steps:
   - name: First
     key: first_key
@@ -46,6 +52,7 @@ cleanup_steps:
         self.assertEqual(scenario.steps[1].key, "second_id")
         self.assertEqual(scenario.steps[1].depends_on, ("first_key",))
         self.assertIn("appl", scenario.services)
+        self.assertTrue(scenario.policy.get("requires", {}).get("signature"))
 
     def test_legacy_short_action_schema_is_rejected(self) -> None:
         payload = """name: legacy

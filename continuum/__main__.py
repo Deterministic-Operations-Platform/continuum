@@ -17,6 +17,7 @@ from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
 from continuum.scenario import load_scenario_document
 from continuum.schema import validate_scenario_schema
+from continuum.signing import verify_bundle_signature
 
 
 def _status_payload() -> dict[str, Any]:
@@ -37,9 +38,36 @@ def _status_payload() -> dict[str, Any]:
         "cwd": str(Path.cwd()),
         "runs_dir": str(runs_dir.resolve()),
         "runs_dir_writable": writable,
-        "commands": ["status", "run", "golden-run", "validate", "plan", "publish", "ci", "serve"],
+        "commands": ["status", "run", "golden-run", "validate", "plan", "publish", "verify", "ci", "serve"],
         "plugins": sorted(PluginRegistry().available_plugin_names()),
     }
+
+
+def cmd_verify(run_id: str, runs_dir: str) -> int:
+    run_dir = Path(runs_dir) / run_id
+    summary_path = run_dir / "summary.json"
+    if not summary_path.is_file():
+        print(f"run not found: {run_dir}")
+        return 2
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    policy_payload = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
+    if "ok" in policy_payload:
+        policy_ok = bool(policy_payload.get("ok", False))
+        missing = policy_payload.get("missing")
+        if not isinstance(missing, list):
+            missing = []
+    else:
+        post = policy_payload.get("post") if isinstance(policy_payload.get("post"), dict) else {}
+        policy_ok = bool(post.get("ok", False))
+        missing = post.get("violations")
+        if not isinstance(missing, list):
+            missing = []
+    ok_sig, sig_msg = verify_bundle_signature(run_dir)
+
+    print(f"policy.ok={policy_ok} missing={missing}")
+    print(f"signature.ok={ok_sig} msg={sig_msg}")
+    return 0 if (policy_ok and ok_sig) else 2
 
 
 def main() -> None:
@@ -93,6 +121,10 @@ def main() -> None:
     publish.add_argument("--runs-dir", dest="runs_dir", default="runs", help="Directory containing run bundles")
     publish.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
     publish.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="How many published runs to keep")
+
+    verify = sub.add_parser("verify", help="Verify policy + signature for a run bundle")
+    verify.add_argument("--run-id", dest="run_id", required=True, help="Run id to verify from runs/<run-id>")
+    verify.add_argument("--runs-dir", dest="runs_dir", default="runs", help="Directory containing run bundles")
 
     ci = sub.add_parser("ci", help="Validate + run + publish in CI mode")
     ci.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -244,6 +276,9 @@ def main() -> None:
         rich_print(f"[green]Published[/green] run [bold]{args.run_id}[/bold] to [bold]{target}[/bold]")
         rich_print(f"[green]Index[/green]: [bold]{Path(args.site_dir) / 'index.html'}[/bold]")
         return
+
+    if args.cmd == "verify":
+        raise SystemExit(cmd_verify(run_id=args.run_id, runs_dir=args.runs_dir))
 
     if args.cmd == "ci":
         scenario_path = Path(args.scenario)

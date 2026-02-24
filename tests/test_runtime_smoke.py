@@ -3,14 +3,15 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from continuum.evidence import EvidenceCollector
 from continuum.plugins import PluginRegistry, StepResult, resolve_attach_files
 from continuum.runtime import DeterministicRuntime
 from continuum.scenario import Scenario, ScenarioStep
+from tests._fakeproc import fake_kill_tree, fake_pid_alive, fake_popen
 
 
 from continuum.evidence import EvidenceCollector
@@ -226,43 +227,47 @@ steps:
 
         runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
 
-        summary1 = runtime.execute(
-            scenario=scenario,
-            scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
-            scenario_text="name: services-smoke",
-            run_id=first_run,
-        )
-        first_state = summary1["services"]["appl"]
-        self.assertFalse(first_state["reused"])
-        first_pid = int(first_state["pid"])
+        with (
+            patch("continuum.plugins.subprocess.Popen", side_effect=fake_popen),
+            patch("continuum.plugins._check_health", return_value=(True, 200, None)),
+            patch("continuum.plugins._is_pid_alive", side_effect=fake_pid_alive),
+        ):
+            summary1 = runtime.execute(
+                scenario=scenario,
+                scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
+                scenario_text="name: services-smoke",
+                run_id=first_run,
+            )
+            first_state = summary1["services"]["appl"]
+            self.assertFalse(first_state["reused"])
+            first_pid = int(first_state["pid"])
 
-        summary2 = runtime.execute(
-            scenario=scenario,
-            scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
-            scenario_text="name: services-smoke",
-            run_id=second_run,
-            resume_run_id=first_run,
-        )
-        second_state = summary2["services"]["appl"]
-        self.assertTrue(second_state["reused"])
-        self.assertEqual(int(second_state["pid"]), first_pid)
+            summary2 = runtime.execute(
+                scenario=scenario,
+                scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
+                scenario_text="name: services-smoke",
+                run_id=second_run,
+                resume_run_id=first_run,
+            )
+            second_state = summary2["services"]["appl"]
+            self.assertTrue(second_state["reused"])
+            self.assertEqual(int(second_state["pid"]), first_pid)
 
-        os.kill(first_pid, 9)
-        time.sleep(0.2)
+            fake_kill_tree(first_pid)
 
-        summary3 = runtime.execute(
-            scenario=scenario,
-            scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
-            scenario_text="name: services-smoke",
-            run_id=third_run,
-            resume_run_id=second_run,
-        )
-        third_state = summary3["services"]["appl"]
-        self.assertFalse(third_state["reused"])
-        self.assertNotEqual(int(third_state["pid"]), first_pid)
+            summary3 = runtime.execute(
+                scenario=scenario,
+                scenario_source=REPO_ROOT / "tests" / "test_runtime_smoke.py",
+                scenario_text="name: services-smoke",
+                run_id=third_run,
+                resume_run_id=second_run,
+            )
+            third_state = summary3["services"]["appl"]
+            self.assertFalse(third_state["reused"])
+            self.assertNotEqual(int(third_state["pid"]), first_pid)
 
-        third_pid = int(third_state["pid"])
-        os.kill(third_pid, 9)
+            third_pid = int(third_state["pid"])
+            fake_kill_tree(third_pid)
 
         verify_path = REPO_ROOT / "runs" / second_run / "evidence" / "00-services" / "appl" / "verify.json"
         self.assertTrue(verify_path.exists())

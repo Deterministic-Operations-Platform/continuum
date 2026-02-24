@@ -6,9 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import hashlib
-import hmac
 import json
-import os
 import platform
 import subprocess
 
@@ -78,9 +76,15 @@ class EvidenceCollector:
 
         manifest_path = run_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest_data, indent=2, sort_keys=True), encoding="utf-8")
-        signature_payload = self._sign_manifest(manifest_path=manifest_path)
-        (run_dir / "bundle_signature.json").write_text(json.dumps(signature_payload, indent=2, sort_keys=True), encoding="utf-8")
-        (run_dir / "manifest.sha256").write_text(f"{signature_payload['manifest_sha256']}  manifest.json\n", encoding="utf-8")
+        signature_payload = None
+        signature_path = run_dir / "bundle_signature.json"
+        if signature_path.is_file():
+            try:
+                payload = json.loads(signature_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    signature_payload = payload
+            except Exception:
+                signature_payload = None
         report_html = render_report_html(summary=summary, manifest=manifest_data, signature=signature_payload)
         (run_dir / "report.html").write_text(report_html, encoding="utf-8")
         return run_dir
@@ -98,26 +102,3 @@ class EvidenceCollector:
             return None
         text = (proc.stdout or proc.stderr).strip()
         return text.splitlines()[0] if text else None
-
-    def _sign_manifest(self, *, manifest_path: Path) -> dict[str, Any]:
-        manifest_bytes = manifest_path.read_bytes()
-        manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
-        key_value = os.environ.get("CONTINUUM_BUNDLE_HMAC_KEY")
-        key_id = os.environ.get("CONTINUUM_BUNDLE_KEY_ID", "local-dev")
-        if key_value:
-            key = key_value.encode("utf-8")
-            key_source = "env:CONTINUUM_BUNDLE_HMAC_KEY"
-        else:
-            key = b"continuum-v0.2-dev-signing-key"
-            key_source = "built-in-dev-key"
-        signature = hmac.new(key, manifest_hash.encode("utf-8"), hashlib.sha256).hexdigest()
-        return {
-            "version": "0.2",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "algorithm": "hmac-sha256",
-            "manifest_path": "manifest.json",
-            "manifest_sha256": manifest_hash,
-            "signature": signature,
-            "key_id": key_id,
-            "key_source": key_source,
-        }

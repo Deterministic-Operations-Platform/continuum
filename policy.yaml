@@ -19,12 +19,6 @@ required_evidence:
     patterns:
       - manifest.json
 
-  - id: bundle-signature
-    description: Tamper-evident bundle signature
-    match: all
-    patterns:
-      - bundle_signature.json
-
   - id: report-html
     description: Shareable HTML report
     match: all

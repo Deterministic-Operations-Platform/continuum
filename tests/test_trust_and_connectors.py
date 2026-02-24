@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -114,12 +115,17 @@ class TrustAndConnectorTests(unittest.TestCase):
             cleanup_steps=(),
         )
         runtime = DeterministicRuntime(plugin_registry=PluginRegistry([_NoopPlugin()]), evidence_collector=EvidenceCollector())
-        summary = runtime.execute(
-            scenario=scenario,
-            scenario_source=Path("tests/fixture.yaml"),
-            scenario_text="name: audit-test",
-            run_id=run_id,
-        )
+        with patch.dict(
+            os.environ,
+            {"CONTINUUM_SIGNING_KEY": "unit-test-signing-key", "CONTINUUM_SIGNING_KEY_ID": "unit-test"},
+            clear=False,
+        ):
+            summary = runtime.execute(
+                scenario=scenario,
+                scenario_source=Path("tests/fixture.yaml"),
+                scenario_text="name: audit-test",
+                run_id=run_id,
+            )
         self.assertEqual(summary["status"], "succeeded")
 
         events = [json.loads(line) for line in (run_dir / "events.log").read_text(encoding="utf-8").splitlines() if line.strip()]

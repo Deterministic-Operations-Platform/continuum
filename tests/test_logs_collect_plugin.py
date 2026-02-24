@@ -1,16 +1,15 @@
 import json
-import shutil
-import tempfile
 import unittest
 from pathlib import Path
 
 from continuum.plugins import LogsCollectPlugin
+from tests._tmpdir import make_temp_dir, remove_temp_dir
 
 
 class LogsCollectPluginTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="continuum-logs-"))
-        self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
+        self.tmp = make_temp_dir("continuum-logs")
+        self.addCleanup(lambda: remove_temp_dir(self.tmp))
 
     def _ctx(self) -> dict:
         def _step_dir(index: int, name: str) -> str:

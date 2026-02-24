@@ -18,6 +18,7 @@ def validate_scenario_schema(document: dict[str, Any]) -> list[str]:
     _expect_type(errors, document, "vars", dict, optional=True)
     _expect_type(errors, document, "services", dict, optional=True)
     _expect_type(errors, document, "governance", dict, optional=True)
+    _expect_type(errors, document, "policy", dict, optional=True)
     _expect_type(errors, document, "cleanup_steps", list, optional=True)
 
     steps = document.get("steps")
@@ -34,6 +35,22 @@ def validate_scenario_schema(document: dict[str, Any]) -> list[str]:
     if isinstance(cleanup_steps, list):
         for index, step in enumerate(cleanup_steps):
             errors.extend(_validate_step(step, index=index, label="cleanup_steps"))
+
+    policy = document.get("policy")
+    if isinstance(policy, dict):
+        requires = policy.get("requires")
+        if requires is not None and not isinstance(requires, dict):
+            errors.append("field 'policy.requires' must be of type object")
+        if isinstance(requires, dict):
+            files = requires.get("files")
+            if files is not None:
+                if not isinstance(files, list):
+                    errors.append("field 'policy.requires.files' must be of type array")
+                elif not all(isinstance(item, str) and item.strip() for item in files):
+                    errors.append("field 'policy.requires.files' must contain non-empty string values")
+            signature = requires.get("signature")
+            if signature is not None and not isinstance(signature, bool):
+                errors.append("field 'policy.requires.signature' must be of type bool")
 
     return sorted(set(errors))
 

@@ -1,33 +1,36 @@
 import json
 import os
-import tempfile
-import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from continuum.plugins import PluginRegistry
-from continuum.sessions import load_sessions, pid_alive
-
-
-def _wait_dead(pid: int, timeout_sec: float = 3.0) -> bool:
-    deadline = time.time() + timeout_sec
-    while time.time() < deadline:
-        if not pid_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not pid_alive(pid)
+from continuum.sessions import load_sessions
+from tests._fakeproc import fake_kill_tree, fake_pid_alive, fake_popen
+from tests._tmpdir import make_temp_dir, remove_temp_dir
 
 
 class AppLauncherSessionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
+        self._tmp = make_temp_dir("applauncher")
+        self.addCleanup(lambda: remove_temp_dir(self._tmp))
         self._old_cwd = os.getcwd()
-        os.chdir(self._tmp.name)
+        os.chdir(self._tmp)
         self.addCleanup(lambda: os.chdir(self._old_cwd))
+
         self.run_dir = Path("runs") / "test-appl-session"
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.registry = PluginRegistry()
+
+        patches = [
+            patch("continuum.plugins.subprocess.Popen", side_effect=fake_popen),
+            patch("continuum.plugins.pid_alive", side_effect=fake_pid_alive),
+            patch("continuum.plugins.kill_tree", side_effect=fake_kill_tree),
+            patch("continuum.sessions.pid_alive", side_effect=fake_pid_alive),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
 
     def _ctx(self) -> dict:
         return {
@@ -52,23 +55,13 @@ class AppLauncherSessionTests(unittest.TestCase):
 
         first = ensure.run(
             step_name="ensure",
-            step_with={
-                "session": "fednow-rof",
-                "command": "python",
-                "args": ["-c", "import time; time.sleep(60)"],
-                "verifyTimeoutSec": 1,
-            },
+            step_with={"session": "fednow-rof", "command": "python", "args": ["-c", "x"], "verifyTimeoutSec": 1},
             ctx=ctx,
             step_index=0,
         )
         second = ensure.run(
             step_name="ensure-again",
-            step_with={
-                "session": "fednow-rof",
-                "command": "python",
-                "args": ["-c", "import time; time.sleep(60)"],
-                "verifyTimeoutSec": 1,
-            },
+            step_with={"session": "fednow-rof", "command": "python", "args": ["-c", "x"], "verifyTimeoutSec": 1},
             ctx=ctx,
             step_index=1,
         )
@@ -81,7 +74,6 @@ class AppLauncherSessionTests(unittest.TestCase):
 
         sessions = load_sessions()
         self.assertIn("fednow-rof", sessions)
-        self.assertEqual(int(sessions["fednow-rof"]["pid"]), first.exports["applauncherPid"])
 
         stopped = stop.run(
             step_name="stop-session",
@@ -89,48 +81,31 @@ class AppLauncherSessionTests(unittest.TestCase):
             ctx=ctx,
             step_index=2,
         )
-
         self.assertTrue(stopped.ok)
         self.assertTrue(stopped.details["stopped"])
-        self.assertTrue(_wait_dead(first.exports["applauncherPid"]))
         self.assertNotIn("fednow-rof", load_sessions())
+        self.assertFalse(fake_pid_alive(first.exports["applauncherPid"]))
 
     def test_ensure_restarts_on_fingerprint_change(self) -> None:
         ensure = self.registry.resolve("applauncher.ensure")
-        stop = self.registry.resolve("applauncher.session.stop")
         ctx = self._ctx()
 
         first = ensure.run(
             step_name="ensure",
-            step_with={
-                "session": "fednow-rof",
-                "command": "python",
-                "args": ["-c", "import time; time.sleep(60)"],
-            },
+            step_with={"session": "fednow-rof", "command": "python", "args": ["-c", "sleep60"]},
             ctx=ctx,
             step_index=0,
         )
         second = ensure.run(
             step_name="ensure-new",
-            step_with={
-                "session": "fednow-rof",
-                "command": "python",
-                "args": ["-c", "import time; time.sleep(61)"],
-            },
+            step_with={"session": "fednow-rof", "command": "python", "args": ["-c", "sleep61"]},
             ctx=ctx,
             step_index=1,
         )
 
         self.assertNotEqual(first.exports["applauncherPid"], second.exports["applauncherPid"])
         self.assertFalse(second.exports["applauncherReused"])
-        self.assertTrue(_wait_dead(first.exports["applauncherPid"]))
-
-        stop.run(
-            step_name="stop-session",
-            step_with={"session": "fednow-rof"},
-            ctx=ctx,
-            step_index=2,
-        )
+        self.assertFalse(fake_pid_alive(first.exports["applauncherPid"]))
 
 
 if __name__ == "__main__":

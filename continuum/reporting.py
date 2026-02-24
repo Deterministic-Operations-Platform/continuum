@@ -33,6 +33,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     generated_at = datetime.now(timezone.utc).isoformat()
 
     step_rows: list[str] = []
+    timeline_items: list[str] = []
     succeeded_steps = 0
     failed_steps = 0
     skipped_steps = 0
@@ -60,6 +61,15 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
             f"<td>{escape(str(attempts_count))}</td>"
             "</tr>"
         )
+        timeline_items.append(
+            "<li class='timeline-item'>"
+            f"<span class='timeline-dot timeline-{escape(step_tone)}'></span>"
+            "<div>"
+            f"<div class='timeline-title'>{escape(str(step.get('name', '')))}</div>"
+            f"<div class='timeline-meta'>{escape(str(step.get('type', '')))} | status: {escape(step_status)} | attempts: {escape(str(attempts_count))}</div>"
+            "</div>"
+            "</li>"
+        )
 
     artifact_rows: list[str] = []
     for artifact in artifacts:
@@ -74,7 +84,9 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
         )
 
     post_violations = policy_post.get("violations") if isinstance(policy_post.get("violations"), list) else []
-    policy_notes = "<br/>".join(escape(str(v)) for v in post_violations)
+    gate_missing = policy.get("missing") if isinstance(policy.get("missing"), list) else []
+    policy_lines = [*post_violations, *[f"missing required file pattern: {item}" for item in gate_missing]]
+    policy_notes = "<br/>".join(escape(str(v)) for v in policy_lines)
     if not policy_notes:
         policy_notes = "none"
 
@@ -93,25 +105,26 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
   <meta name='viewport' content='width=device-width,initial-scale=1'/>
   <title>Continuum Report __RUN_ID__</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;800&family=Manrope:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap');
     :root {
-      --ink: #0e2238;
-      --ink-soft: #47607a;
-      --line: #cfe0ef;
+      --ink: #13243b;
+      --ink-soft: #455e77;
+      --line: #d2e1ef;
       --panel: rgba(255, 255, 255, 0.88);
-      --hero-a: #07244d;
-      --hero-b: #17649a;
-      --hero-c: #00a2a2;
+      --hero-a: #061629;
+      --hero-b: #13446f;
+      --hero-c: #098280;
       --success: #0f7d55;
       --danger: #b53b2f;
       --active: #1268ab;
       --muted: #677483;
-      --radius: 18px;
-      --shadow: 0 30px 64px rgba(9, 33, 62, 0.14);
+      --radius: 22px;
+      --shadow: 0 34px 70px rgba(9, 33, 62, 0.16);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Aptos", "Segoe UI Variable", "Trebuchet MS", sans-serif;
+      font-family: "Manrope", "Aptos", "Segoe UI Variable", "Trebuchet MS", sans-serif;
       color: var(--ink);
       background:
         radial-gradient(circle at 10% -5%, rgba(20, 101, 174, 0.26), transparent 34%),
@@ -145,7 +158,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     }
     h1 {
       margin: 0;
-      font-family: "Bahnschrift SemiCondensed", "Aptos Display", "Segoe UI", sans-serif;
+      font-family: "Space Grotesk", "Bahnschrift SemiCondensed", "Aptos Display", "Segoe UI", sans-serif;
       font-size: clamp(1.5rem, 1.25rem + 1.2vw, 2.4rem);
       letter-spacing: 0.01em;
     }
@@ -215,6 +228,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     }
     .metric-value {
       margin-top: 6px;
+      font-family: "Space Grotesk", sans-serif;
       font-size: clamp(1.05rem, 0.9rem + 0.7vw, 1.5rem);
       font-weight: 700;
       color: var(--ink);
@@ -254,7 +268,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
       margin-bottom: 6px;
     }
     .mono {
-      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-family: "JetBrains Mono", "IBM Plex Mono", "Consolas", monospace;
       font-size: 0.84rem;
     }
     table {
@@ -320,7 +334,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     .tone-active { color: var(--active); }
     .tone-muted { color: var(--muted); }
     code {
-      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-family: "JetBrains Mono", "IBM Plex Mono", "Consolas", monospace;
       font-size: 0.78rem;
       background: #eff6fc;
       border: 1px solid #d7e5f3;
@@ -336,6 +350,46 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     .inline-block {
       display: block;
       margin-top: 8px;
+      overflow-wrap: anywhere;
+    }
+    .timeline {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+    .timeline-item {
+      display: grid;
+      grid-template-columns: 20px 1fr;
+      gap: 10px;
+      align-items: start;
+      border: 1px solid #dbe7f2;
+      border-radius: 11px;
+      background: #f8fbff;
+      padding: 10px;
+    }
+    .timeline-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-top: 3px;
+      box-shadow: 0 0 0 3px rgba(23, 76, 128, 0.08);
+    }
+    .timeline-success { background: var(--success); }
+    .timeline-danger { background: var(--danger); }
+    .timeline-active { background: var(--active); }
+    .timeline-muted { background: var(--muted); }
+    .timeline-title {
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 0.93rem;
+      font-weight: 700;
+      color: #1b3957;
+    }
+    .timeline-meta {
+      margin-top: 4px;
+      font-size: 0.8rem;
+      color: var(--ink-soft);
       overflow-wrap: anywhere;
     }
     @media (max-width: 1060px) {
@@ -381,6 +435,11 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
       <article class='metric' style='--i: 1'><div class='metric-label'>Succeeded Steps</div><div class='metric-value tone-success'>__STEP_SUCCEEDED__</div></article>
       <article class='metric' style='--i: 2'><div class='metric-label'>Failed Steps</div><div class='metric-value tone-danger'>__STEP_FAILED__</div></article>
       <article class='metric' style='--i: 3'><div class='metric-label'>Skipped Steps</div><div class='metric-value tone-muted'>__STEP_SKIPPED__</div></article>
+    </section>
+
+    <section>
+      <h2>Execution Timeline</h2>
+      <ul class='timeline'>__TIMELINE_ITEMS__</ul>
     </section>
 
     <section>
@@ -444,6 +503,7 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     html = html.replace("__STEP_SUCCEEDED__", str(succeeded_steps))
     html = html.replace("__STEP_FAILED__", str(failed_steps))
     html = html.replace("__STEP_SKIPPED__", str(skipped_steps))
+    html = html.replace("__TIMELINE_ITEMS__", "\n            ".join(timeline_items) or "<li class='timeline-item'><span class='timeline-dot timeline-muted'></span><div><div class='timeline-title'>No steps recorded</div><div class='timeline-meta'>Run summary did not include step telemetry.</div></div></li>")
     html = html.replace("__STEP_ROWS__", "\n            ".join(step_rows) or "<tr><td colspan='6'>No steps recorded.</td></tr>")
     html = html.replace("__POLICY_NOTES__", policy_notes)
     html = html.replace("__FAILURE_MESSAGE__", escape(str(failure.get("message") or "none")))

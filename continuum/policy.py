@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fnmatch
 import glob
 from pathlib import Path
 from typing import Any
+import time
 
 import yaml
 
@@ -34,6 +36,13 @@ class RunPolicy:
     version: str
     required_evidence: tuple[PolicyRequirement, ...]
     source_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyResult:
+    ok: bool
+    missing: list[str]
+    details: dict[str, Any]
 
 
 def load_policy(path: str | Path | None = None) -> RunPolicy | None:
@@ -202,6 +211,68 @@ def evaluate_policy_post(*, policy: RunPolicy | None, scenario: Scenario, run_di
         "requirements": requirement_results,
         "violations": violations,
     }
+
+
+def _flatten_required(policy: dict[str, Any]) -> list[str]:
+    req = policy.get("requires") if isinstance(policy.get("requires"), dict) else {}
+    files = req.get("files") if isinstance(req, dict) else []
+    if not isinstance(files, list):
+        return []
+    out: list[str] = []
+    for item in files:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+def _glob_match(rel_path: str, pattern: str) -> bool:
+    rel = rel_path.replace("\\", "/")
+    pat = pattern.replace("\\", "/")
+    return fnmatch.fnmatch(rel, pat)
+
+
+def evaluate_policy(
+    run_dir: Path,
+    summary: dict[str, Any],
+    policy: dict[str, Any] | None,
+) -> PolicyResult:
+    policy = policy or {}
+
+    required_patterns = _flatten_required(policy)
+    missing: list[str] = []
+
+    bundle_files: set[str] = set()
+    for path in run_dir.rglob("*"):
+        if path.is_file():
+            bundle_files.add(str(path.relative_to(run_dir)).replace("\\", "/"))
+
+    for pattern in required_patterns:
+        if not any(_glob_match(rel, pattern) for rel in bundle_files):
+            missing.append(pattern)
+
+    req = policy.get("requires") if isinstance(policy.get("requires"), dict) else {}
+    require_signature = bool(req.get("signature")) if isinstance(req, dict) else False
+    if require_signature and not (run_dir / "bundle_signature.json").is_file():
+        missing.append("bundle_signature.json")
+
+    details = {
+        "evaluatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "requiredFiles": required_patterns,
+        "bundleFileCount": len(bundle_files),
+        "missing": list(missing),
+    }
+    ok = len(missing) == 0
+
+    # Preserve existing policy metadata (pre/post) while surfacing a top-level gate verdict.
+    current = summary.get("policy")
+    if isinstance(current, dict):
+        current["ok"] = ok
+        current["missing"] = list(missing)
+        current["details"] = details
+        summary["policy"] = current
+    else:
+        summary["policy"] = {"ok": ok, "missing": list(missing), "details": details}
+    return PolicyResult(ok=ok, missing=list(missing), details=details)
 
 
 def _parse_requirement_patterns(*, item: dict[str, Any], index: int) -> tuple[tuple[str, ...], str]:

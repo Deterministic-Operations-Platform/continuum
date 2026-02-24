@@ -28,11 +28,14 @@ from continuum.plugins import (
 from continuum.policy import (
     DEFAULT_POLICY_PATH,
     PolicyValidationError,
+    evaluate_policy,
     evaluate_policy_post,
     evaluate_policy_pre,
     load_policy,
 )
+from continuum.reporting import ensure_report
 from continuum.scenario import Scenario, ScenarioStep
+from continuum.signing import write_bundle_signature
 
 
 _SECRET_HINTS = (
@@ -235,7 +238,7 @@ class DeterministicRuntime:
         service_states: dict[str, dict[str, Any]] = {}
         service_cleanup: dict[str, Any] = {}
         governance: dict[str, Any] = {}
-        policy_results: dict[str, Any] = {"pre": {}, "post": {}}
+        policy_results: dict[str, Any] = {"pre": {}, "post": {}, "ok": True, "missing": [], "details": {}}
         policy_config = None
         policy_path = Path(DEFAULT_POLICY_PATH)
         policy_load_error: str | None = None
@@ -420,6 +423,57 @@ class DeterministicRuntime:
                 summary=safe_summary,
                 manifest_payload=manifest_payload,
             )
+            signature_error: str | None = None
+            try:
+                write_bundle_signature(run_dir)
+            except Exception as err:
+                signature_error = str(err)
+                if audit:
+                    audit.append("signature.error", {"message": signature_error})
+
+            scenario_policy = scenario.policy if isinstance(getattr(scenario, "policy", None), dict) else {}
+            gate_result = evaluate_policy(Path(run_dir), summary=summary, policy=scenario_policy)
+            policy_results["gate"] = {"ok": gate_result.ok, "missing": list(gate_result.missing), "details": gate_result.details}
+            if audit:
+                audit.append("policy.gate", redactor.redact(policy_results["gate"]))
+
+            if signature_error and failure is None:
+                failure = {"message": f"Bundle signature write failed: {signature_error}", "class": FailureClass.INFRA.value}
+                status = "failed"
+            if not gate_result.ok:
+                missing = ", ".join(gate_result.missing) if gate_result.missing else "required evidence missing"
+                if failure is None:
+                    failure = {"message": f"Policy gate failed: missing required evidence: {missing}", "class": FailureClass.LOGIC.value}
+                status = "failed"
+
+            pre_ok = bool((policy_results.get("pre") or {}).get("ok", True))
+            post_ok = bool((policy_results.get("post") or {}).get("ok", True))
+            policy_results["ok"] = bool(pre_ok and post_ok and gate_result.ok)
+            policy_results["missing"] = list(gate_result.missing)
+            policy_results["details"] = gate_result.details
+
+            summary["status"] = status
+            summary["failure"] = failure
+            summary["policy"] = policy_results
+            safe_summary = redactor.redact(summary)
+            manifest_payload["status"] = status
+            manifest_payload["policy"] = redactor.redact(policy_results)
+            self._write_bundle_safely(
+                run_id=resolved_run_id,
+                scenario_source=scenario_source,
+                scenario_text=scenario_text,
+                context_payload=context_payload,
+                summary=safe_summary,
+                manifest_payload=manifest_payload,
+            )
+            try:
+                write_bundle_signature(run_dir)
+            except Exception:
+                pass
+            try:
+                ensure_report(run_dir)
+            except Exception:
+                pass
         if safe_summary is None:
             raise StepExecutionError("run summary was not generated")
         if deferred_error is not None:

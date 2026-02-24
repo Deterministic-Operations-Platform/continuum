@@ -35,6 +35,7 @@ class Scenario:
     vars: dict[str, Any]
     services: dict[str, dict[str, Any]] = field(default_factory=dict)
     governance: dict[str, Any] = field(default_factory=dict)
+    policy: dict[str, Any] = field(default_factory=dict)
     cleanup_steps: tuple[ScenarioStep, ...] = ()
 
     @staticmethod
@@ -64,6 +65,10 @@ class Scenario:
         if not isinstance(raw_governance, dict):
             raise ScenarioValidationError("governance must be a mapping when provided")
 
+        raw_policy = data.get("policy") or {}
+        if not isinstance(raw_policy, dict):
+            raise ScenarioValidationError("policy must be a mapping when provided")
+
         return Scenario(
             name=str(data["name"]),
             rail=str(data["rail"]),
@@ -72,6 +77,7 @@ class Scenario:
             vars=raw_vars,
             services=_parse_services(raw_services),
             governance=_parse_governance(raw_governance),
+            policy=_parse_policy(raw_policy),
         )
 
 
@@ -110,6 +116,20 @@ def _parse_governance(raw_governance: dict[str, Any]) -> dict[str, Any]:
     approval_id = normalized.get("approvalId")
     if approval_id is not None and (not isinstance(approval_id, str) or not approval_id.strip()):
         raise ScenarioValidationError("governance.approvalId must be a non-empty string when provided")
+    return normalized
+
+
+def _parse_policy(raw_policy: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(raw_policy)
+    req = normalized.get("requires") or {}
+    if req and not isinstance(req, dict):
+        raise ScenarioValidationError("policy.requires must be a mapping when provided")
+    if isinstance(req, dict):
+        files = req.get("files") or []
+        if files and (not isinstance(files, list) or not all(isinstance(v, str) and v.strip() for v in files)):
+            raise ScenarioValidationError("policy.requires.files must be an array of non-empty strings")
+        if "signature" in req and not isinstance(req.get("signature"), bool):
+            raise ScenarioValidationError("policy.requires.signature must be boolean when provided")
     return normalized
 
 

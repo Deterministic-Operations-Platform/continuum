@@ -42,7 +42,8 @@ def publish_run(*, run_id: str, runs_dir: Path = Path("runs"), site_dir: Path = 
     if target_dir.exists():
         shutil.rmtree(target_dir)
     shutil.copytree(source_dir, target_dir)
-    if not (target_dir / "report.html").is_file():
+    report_path = target_dir / "report.html"
+    if not report_path.is_file() or _looks_generated_report(report_path):
         ensure_report(target_dir)
     _redact_tree(target_dir)
 
@@ -58,6 +59,15 @@ def _read_json(path: Path) -> dict[str, Any]:
     if isinstance(data, dict):
         return data
     return {}
+
+
+def _looks_generated_report(path: Path) -> bool:
+    try:
+        sample = path.read_text(encoding="utf-8", errors="replace")[:8000]
+    except Exception:
+        return False
+    lowered = sample.lower()
+    return "continuum provable run" in lowered or "<title>continuum report" in lowered
 
 
 def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
@@ -142,7 +152,10 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
         ).lower()
         rows.append(
             f"<tr data-row='run' data-status='{escape(status_tone)}' data-status-value='{escape(item.status.lower())}' "
-            f"data-started='{escape(item.started_at)}' data-search='{escape(search_blob)}'>"
+            f"data-run-id='{escape(item.run_id)}' data-status-label='{escape(item.status)}' "
+            f"data-trace-id='{escape(item.trace_id)}' data-git-head='{escape(item.git_head)}' "
+            f"data-started='{escape(item.started_at)}' data-ended='{escape(item.ended_at)}' data-search='{escape(search_blob)}'>"
+            f"<td class='select-cell'><input type='checkbox' class='compare-check' aria-label='Select {escape(item.run_id)} for compare'/></td>"
             f"<td><a class='run-link' href='runs/{escape(item.run_id)}/report.html'>{escape(item.run_id)}</a></td>"
             f"<td><span class='status-badge status-{escape(status_tone)}'>{escape(item.status)}</span></td>"
             f"<td class='mono'>{escape(item.trace_id) or 'n/a'}</td>"
@@ -161,26 +174,27 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
   <meta name='viewport' content='width=device-width,initial-scale=1'/>
   <title>Continuum Evidence Viewer</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;800&family=Manrope:wght@400;600;700&family=JetBrains+Mono:wght@500&display=swap');
     :root {
-      --ink: #0b1d2f;
-      --ink-soft: #42576f;
-      --panel: rgba(255, 255, 255, 0.86);
-      --line: #cfdcea;
-      --hero-a: #041b3a;
-      --hero-b: #0d5c8f;
-      --hero-c: #00a6a6;
-      --radius: 18px;
-      --shadow: 0 30px 70px rgba(7, 26, 52, 0.15);
+      --ink: #12243a;
+      --ink-soft: #3e566f;
+      --panel: rgba(255, 255, 255, 0.90);
+      --line: #cfdeed;
+      --hero-a: #06162c;
+      --hero-b: #0d3b63;
+      --hero-c: #097f7d;
+      --radius: 22px;
+      --shadow: 0 34px 78px rgba(7, 26, 52, 0.18);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Aptos", "Segoe UI Variable", "Trebuchet MS", sans-serif;
+      font-family: "Manrope", "Aptos", "Segoe UI Variable", "Trebuchet MS", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at 10% -10%, rgba(26, 105, 188, 0.30), transparent 35%),
-        radial-gradient(circle at 90% 0%, rgba(4, 169, 153, 0.18), transparent 40%),
-        linear-gradient(160deg, #eef4ff 0%, #f8fbff 55%, #eef6ff 100%);
+        radial-gradient(circle at 10% -10%, rgba(26, 105, 188, 0.34), transparent 35%),
+        radial-gradient(circle at 90% 0%, rgba(4, 169, 153, 0.22), transparent 40%),
+        linear-gradient(160deg, #edf3fc 0%, #f9fbff 52%, #ebf3fc 100%);
       min-height: 100vh;
     }
     body::before {
@@ -218,10 +232,18 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       background: radial-gradient(circle, rgba(255, 255, 255, 0.38) 0%, transparent 65%);
       pointer-events: none;
     }
+    .eyebrow {
+      margin: 0 0 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: rgba(234, 246, 255, 0.78);
+    }
     .hero h1 {
       margin: 0;
-      font-family: "Bahnschrift SemiCondensed", "Aptos Display", "Segoe UI", sans-serif;
-      font-size: clamp(1.65rem, 1.3rem + 1.3vw, 2.5rem);
+      font-family: "Space Grotesk", "Bahnschrift SemiCondensed", "Aptos Display", "Segoe UI", sans-serif;
+      font-size: clamp(1.75rem, 1.4rem + 1.4vw, 2.7rem);
       letter-spacing: 0.01em;
     }
     .hero p {
@@ -266,6 +288,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
     }
     .card-value {
       margin-top: 6px;
+      font-family: "Space Grotesk", sans-serif;
       font-size: clamp(1.1rem, 0.95rem + 0.8vw, 1.6rem);
       font-weight: 700;
     }
@@ -350,7 +373,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
     .table-wrap {
       margin-top: 8px;
       overflow-x: auto;
-      border: 1px solid #d0dfed;
+      border: 1px solid #c8d9ea;
       border-radius: 14px;
       background: #ffffff;
     }
@@ -371,7 +394,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       padding: 11px 10px;
       text-align: left;
       vertical-align: top;
-      font-size: 0.9rem;
+      font-size: 0.86rem;
       white-space: nowrap;
     }
     tbody tr {
@@ -382,6 +405,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       transform: translateY(-1px);
     }
     .run-link {
+      font-family: "Space Grotesk", sans-serif;
       font-weight: 700;
       color: #0f4c81;
       text-decoration: none;
@@ -420,11 +444,11 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       border-color: #d8dee7;
     }
     .mono {
-      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-family: "JetBrains Mono", "IBM Plex Mono", "Consolas", monospace;
       font-size: 0.82rem;
     }
     code {
-      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-family: "JetBrains Mono", "IBM Plex Mono", "Consolas", monospace;
       font-size: 0.78rem;
       color: #173757;
       background: #f0f6fc;
@@ -446,6 +470,107 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       padding: 24px;
       font-size: 0.95rem;
     }
+    .select-cell {
+      width: 38px;
+      text-align: center;
+    }
+    .compare-check {
+      width: 15px;
+      height: 15px;
+      accent-color: #1b6fb6;
+      cursor: pointer;
+    }
+    tbody tr.is-selected {
+      box-shadow: inset 3px 0 0 #1b6fb6;
+      background: #edf6ff;
+    }
+    .compare-panel {
+      margin-top: 12px;
+      border: 1px solid #d4e2ef;
+      border-radius: 14px;
+      background: #ffffff;
+      padding: 12px;
+    }
+    .compare-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .compare-head h2 {
+      margin: 0;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1rem;
+    }
+    .compare-hint {
+      margin: 6px 0;
+      color: var(--ink-soft);
+      font-size: 0.85rem;
+    }
+    .compare-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .compare-card {
+      border: 1px solid #dbe7f3;
+      border-radius: 10px;
+      background: #f9fcff;
+      padding: 10px;
+    }
+    .compare-card .title {
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 700;
+      color: #1f3f5f;
+      font-size: 0.9rem;
+    }
+    .kv {
+      margin-top: 6px;
+      display: grid;
+      gap: 4px;
+      font-size: 0.79rem;
+    }
+    .kv-row {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 8px;
+    }
+    .kv-row .k {
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 0.66rem;
+      font-weight: 700;
+      color: #536a80;
+    }
+    .kv-row .v {
+      color: #1f3b58;
+      overflow-wrap: anywhere;
+    }
+    .diff-table {
+      margin-top: 8px;
+      border: 1px solid #dbe7f3;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .diff-table table {
+      min-width: 0;
+      width: 100%;
+    }
+    .diff-table thead th {
+      position: static;
+      font-size: 0.66rem;
+      background: #ecf4fc;
+    }
+    .diff-table td {
+      white-space: normal;
+      font-size: 0.78rem;
+      padding: 8px;
+    }
+    .changed {
+      background: #fff2df;
+      color: #765100;
+      font-weight: 700;
+    }
     @media (max-width: 1080px) {
       .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
@@ -461,6 +586,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       .toolbar { gap: 10px; }
       .status-filters { width: 100%; }
       .controls { width: 100%; justify-content: space-between; }
+      .compare-grid { grid-template-columns: 1fr; }
     }
     @keyframes riseIn {
       0% {
@@ -477,12 +603,14 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
 <body>
   <div class='shell'>
     <section class='hero'>
+      <p class='eyebrow'>Operational Audit Fabric</p>
       <h1>Continuum Evidence Viewer</h1>
-      <p>Deterministic run intelligence with audit-grade traceability. Compare runs by status, trace ID, and git head in one operating console.</p>
+      <p>Deterministic run intelligence with audit-grade traceability. Compare runs by status, trace ID, and git head in one executive control room.</p>
       <div class='hero-meta'>
         <span class='meta-pill'>Index Source: <code>site/runs/index.json</code></span>
         <span class='meta-pill'>Published Runs: <strong id='totalRuns'>__RUN_COUNT__</strong></span>
         <span class='meta-pill'>Visible Rows: <strong id='visibleCount'>__RUN_COUNT__</strong></span>
+        <span class='meta-pill'>Success Rate: <strong id='successRate'>__SUCCESS_RATE__%</strong></span>
       </div>
       <div class='cards'>
         <article class='card' style='--i: 0'><div class='card-label'>Succeeded</div><div class='card-value'>__SUCCEEDED_COUNT__</div></article>
@@ -517,13 +645,22 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       </div>
       <div class='table-wrap'>
         <table id='runs'>
-          <thead><tr><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
+          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
           <tbody>
             __ROWS__
-            <tr id='emptyRow' hidden><td colspan='7'>No runs match the current filter.</td></tr>
+            <tr id='emptyRow' hidden><td colspan='8'>No runs match the current filter.</td></tr>
           </tbody>
         </table>
       </div>
+      <section class='compare-panel'>
+        <div class='compare-head'>
+          <h2>Compare Workbench</h2>
+          <p class='compare-hint'><strong id='compareCount'>0</strong> / 2 selected</p>
+        </div>
+        <p id='compareHint' class='compare-hint'>Select up to two runs to compare status, trace, and git metadata.</p>
+        <div class='compare-grid' id='compareGrid'></div>
+        <div class='diff-table' id='diffTable' hidden></div>
+      </section>
     </section>
   </div>
   <script>
@@ -533,6 +670,18 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
     const emptyRow = document.getElementById("emptyRow");
     const visibleCount = document.getElementById("visibleCount");
     const pills = Array.from(document.querySelectorAll(".status-pill"));
+    const compareCount = document.getElementById("compareCount");
+    const compareHint = document.getElementById("compareHint");
+    const compareGrid = document.getElementById("compareGrid");
+    const diffTable = document.getElementById("diffTable");
+
+    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[char]);
 
     function activeStatus() {
       const active = pills.find((pill) => pill.getAttribute("aria-pressed") === "true");
@@ -544,6 +693,106 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       return Number.isFinite(parsed) ? parsed : 0;
     }
 
+    function selectedRows() {
+      return rows.filter((row) => {
+        const input = row.querySelector(".compare-check");
+        return Boolean(input && input.checked);
+      });
+    }
+
+    function rowData(row) {
+      return {
+        runId: row.dataset.runId || "",
+        status: row.dataset.statusLabel || "",
+        traceId: row.dataset.traceId || "",
+        gitHead: row.dataset.gitHead || "",
+        started: row.dataset.started || "",
+        ended: row.dataset.ended || ""
+      };
+    }
+
+    function renderCompare() {
+      const selected = selectedRows().map(rowData);
+      compareCount.textContent = String(selected.length);
+
+      rows.forEach((row) => {
+        const input = row.querySelector(".compare-check");
+        row.classList.toggle("is-selected", Boolean(input && input.checked));
+      });
+
+      if (selected.length === 0) {
+        compareHint.textContent = "Select up to two runs to compare status, trace, and git metadata.";
+        compareGrid.innerHTML = "";
+        diffTable.hidden = true;
+        diffTable.innerHTML = "";
+        return;
+      }
+
+      compareGrid.innerHTML = selected
+        .map((item) => `
+          <article class='compare-card'>
+            <div class='title'>${esc(item.runId)}</div>
+            <div class='kv'>
+              <div class='kv-row'><span class='k'>Status</span><span class='v'>${esc(item.status || "n/a")}</span></div>
+              <div class='kv-row'><span class='k'>Trace</span><span class='v mono'>${esc(item.traceId || "n/a")}</span></div>
+              <div class='kv-row'><span class='k'>Git</span><span class='v mono'>${esc(item.gitHead || "n/a")}</span></div>
+              <div class='kv-row'><span class='k'>Start</span><span class='v mono'>${esc(item.started || "n/a")}</span></div>
+            </div>
+          </article>
+        `)
+        .join("");
+
+      if (selected.length === 1) {
+        compareHint.textContent = "Select one more run for a side-by-side diff.";
+        diffTable.hidden = true;
+        diffTable.innerHTML = "";
+        return;
+      }
+
+      compareHint.textContent = "Live diff for selected runs.";
+      const fields = [
+        ["Status", selected[0].status, selected[1].status],
+        ["Trace ID", selected[0].traceId, selected[1].traceId],
+        ["Git HEAD", selected[0].gitHead, selected[1].gitHead],
+        ["Started", selected[0].started, selected[1].started],
+        ["Ended", selected[0].ended, selected[1].ended]
+      ];
+      const diffRows = fields
+        .map(([label, left, right]) => {
+          const changed = String(left || "") !== String(right || "");
+          return `
+            <tr>
+              <td>${esc(label)}</td>
+              <td class='${changed ? "changed" : ""}'>${esc(left || "n/a")}</td>
+              <td class='${changed ? "changed" : ""}'>${esc(right || "n/a")}</td>
+            </tr>
+          `;
+        })
+        .join("");
+      diffTable.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>${esc(selected[0].runId)}</th>
+              <th>${esc(selected[1].runId)}</th>
+            </tr>
+          </thead>
+          <tbody>${diffRows}</tbody>
+        </table>
+      `;
+      diffTable.hidden = false;
+    }
+
+    function enforceCompareLimit(target) {
+      const checked = selectedRows();
+      if (checked.length <= 2) {
+        return true;
+      }
+      target.checked = false;
+      return false;
+    }
+
     function applySort() {
       const tbody = document.querySelector("#runs tbody");
       const mode = sortSelect.value;
@@ -552,11 +801,11 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
           return toTime(left.dataset.started) - toTime(right.dataset.started);
         }
         if (mode === "status") {
-          const byStatus = left.dataset.statusValue.localeCompare(right.dataset.statusValue);
-          return byStatus || left.children[0].innerText.localeCompare(right.children[0].innerText);
+          const byStatus = (left.dataset.statusValue || "").localeCompare(right.dataset.statusValue || "");
+          return byStatus || (left.dataset.runId || "").localeCompare(right.dataset.runId || "");
         }
         if (mode === "run") {
-          return left.children[0].innerText.localeCompare(right.children[0].innerText);
+          return (left.dataset.runId || "").localeCompare(right.dataset.runId || "");
         }
         return toTime(right.dataset.started) - toTime(left.dataset.started);
       });
@@ -594,6 +843,15 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       });
     }
 
+    for (const check of document.querySelectorAll(".compare-check")) {
+      check.addEventListener("change", (event) => {
+        if (!enforceCompareLimit(event.target)) {
+          return;
+        }
+        renderCompare();
+      });
+    }
+
     qInput.addEventListener("input", applyFilters);
     sortSelect.addEventListener("change", () => {
       applySort();
@@ -602,13 +860,18 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
 
     applySort();
     applyFilters();
+    renderCompare();
   </script>
 </body>
 </html>
 """
 
+    run_count = len(runs)
+    success_rate = int(round((succeeded_count / run_count) * 100)) if run_count else 0
+
     html = html.replace("__ROWS__", "\n            ".join(rows))
-    html = html.replace("__RUN_COUNT__", str(len(runs)))
+    html = html.replace("__RUN_COUNT__", str(run_count))
+    html = html.replace("__SUCCESS_RATE__", str(success_rate))
     html = html.replace("__SUCCEEDED_COUNT__", str(succeeded_count))
     html = html.replace("__FAILED_COUNT__", str(failed_count))
     html = html.replace("__ACTIVE_COUNT__", str(active_count))

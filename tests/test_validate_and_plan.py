@@ -1,11 +1,12 @@
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import os
 
 from continuum.plugins import PluginRegistry
 from continuum.runtime import build_plan, validate_scenario
 from continuum.scenario import load_scenario
+from tests._tmpdir import make_temp_dir, remove_temp_dir
 
 
 class ValidateAndPlanTests(unittest.TestCase):
@@ -38,19 +39,20 @@ class ValidateAndPlanTests(unittest.TestCase):
 
     def test_plan_resolves_jira_attach_globs_deterministically(self) -> None:
         scenario = load_scenario("scenarios/fednow-return-of-funds.yaml")
-        with tempfile.TemporaryDirectory() as td:
-            run_dir = Path(td)
-            f1 = run_dir / "evidence" / "03-run_postman" / "newman-report.html"
-            f2 = run_dir / "evidence" / "04-verify_mongo" / "assertions.json"
-            f1.parent.mkdir(parents=True)
-            f2.parent.mkdir(parents=True)
-            f1.write_text("x", encoding="utf-8")
-            f2.write_text("{}", encoding="utf-8")
-            plan = build_plan(scenario, run_id="demo", run_dir=run_dir, env={}, vars=scenario.vars)
-            attach_step = [s for s in plan["steps"] if s["type"] == "jira.attach"][0]
-            self.assertEqual(attach_step["attach_files"], sorted(attach_step["attach_files"]))
-            self.assertIn(str(f1), attach_step["attach_files"])
-            self.assertIn(str(f2), attach_step["attach_files"])
+        run_dir = make_temp_dir("validate-plan")
+        self.addCleanup(lambda: remove_temp_dir(run_dir))
+        f1 = run_dir / "evidence" / "03-run_postman" / "newman-report.html"
+        f2 = run_dir / "evidence" / "04-verify_mongo" / "assertions.json"
+        f1.parent.mkdir(parents=True)
+        f2.parent.mkdir(parents=True)
+        f1.write_text("x", encoding="utf-8")
+        f2.write_text("{}", encoding="utf-8")
+        plan = build_plan(scenario, run_id="demo", run_dir=run_dir, env={}, vars=scenario.vars)
+        attach_step = [s for s in plan["steps"] if s["type"] == "jira.attach"][0]
+        self.assertEqual(attach_step["attach_files"], sorted(attach_step["attach_files"]))
+        normalized = {os.path.normpath(item) for item in attach_step["attach_files"]}
+        self.assertIn(os.path.normpath(str(f1)), normalized)
+        self.assertIn(os.path.normpath(str(f2)), normalized)
 
 
 if __name__ == "__main__":

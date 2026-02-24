@@ -3,6 +3,17 @@ rail: fednow
 vars:
   issueKey: PGQT-5417
 
+policy:
+  requires:
+    signature: true
+    files:
+      - "summary.json"
+      - "manifest.json"
+      - "report.html"
+      - "evidence/**/snippets.txt"
+      - "evidence/**/assertions.json"
+      - "evidence/**/newman-report.html"
+
 steps:
   - name: Ensure AppLauncher session
     id: ensure_appl
