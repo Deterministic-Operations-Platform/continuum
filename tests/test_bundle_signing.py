@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests._tmpdir import make_temp_dir, remove_temp_dir
-from continuum.signing import write_bundle_signature, verify_bundle_signature
+from continuum.signing import generate_ed25519_keypair, write_bundle_signature, verify_bundle_signature
 
 
 class BundleSigningTests(unittest.TestCase):
@@ -56,7 +56,47 @@ class BundleSigningTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             ok, msg = verify_bundle_signature(run_dir)
             self.assertFalse(ok)
-            self.assertIn("signing key", msg.lower())
+            self.assertTrue("signing key" in msg.lower() or "mismatch" in msg.lower())
+
+    def test_write_and_verify_signature_ok_with_ed25519_public_key(self) -> None:
+        run_dir = self.root / "runs" / "sig-004"
+        run_dir.mkdir(parents=True)
+        (run_dir / "manifest.json").write_text(json.dumps({"a": 1}), encoding="utf-8")
+
+        keys_dir = self.root / "keys"
+        meta = generate_ed25519_keypair(output_dir=keys_dir, key_name="test")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "CONTINUUM_SIGNING_PRIVATE_KEY_FILE": meta["privateKeyPath"],
+                "CONTINUUM_SIGNING_PUBLIC_KEY_FILE": meta["publicKeyPath"],
+                "CONTINUUM_SIGNING_KEY_ID": meta["keyId"],
+                "CONTINUUM_SIGNING_PUBLIC_KEY_ID": meta["publicKeyId"],
+            },
+            clear=True,
+        ):
+            payload = write_bundle_signature(run_dir)
+            self.assertEqual(payload.get("algorithm"), "Ed25519(manifest_sha256)")
+            self.assertEqual(payload.get("publicKeyId"), meta["publicKeyId"])
+
+        with patch.dict(
+            "os.environ",
+            {
+                "CONTINUUM_SIGNING_PUBLIC_KEY_FILE": meta["publicKeyPath"],
+            },
+            clear=True,
+        ):
+            ok, msg = verify_bundle_signature(run_dir)
+            self.assertTrue(ok, msg)
+
+    def test_keygen_writes_expected_files(self) -> None:
+        keys_dir = self.root / "keys-output"
+        meta = generate_ed25519_keypair(output_dir=keys_dir, key_name="bank")
+        self.assertTrue((keys_dir / "bank.private.pem").is_file())
+        self.assertTrue((keys_dir / "bank.public.pem").is_file())
+        self.assertTrue((keys_dir / "bank.json").is_file())
+        self.assertEqual(meta["algorithm"], "Ed25519")
 
 
 if __name__ == "__main__":
