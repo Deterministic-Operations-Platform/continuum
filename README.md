@@ -99,6 +99,8 @@ Every run writes:
 - `events.log` is append-only with hash chaining (`prevHash` -> `hash`) for tamper-evident audit history.
 - `manifest.json` includes per-artifact checksums plus an artifact-set checksum, and `bundle_signature.json` + `manifest.sha256` provide immutable integrity evidence.
 - `site/index.html` is a shareable Evidence Viewer with searchable run comparison fields (`status`, `traceId`, `gitHead`).
+- `site/index.html` now includes an interactive dashboard UI (search, status filters, sorting, and KPI cards) for faster run triage.
+- `runs/<run-id>/report.html` is rendered as a presentation-grade audit report with execution, policy, and tamper-evidence sections.
 
 ## Run example
 ```bash
