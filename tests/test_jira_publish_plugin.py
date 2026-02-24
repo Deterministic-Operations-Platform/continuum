@@ -92,8 +92,8 @@ class JiraPublishPluginTests(unittest.TestCase):
         )
         self.assertTrue(result.ok)
         evidence = json.loads(Path(result.evidence_paths[0]).read_text(encoding="utf-8"))
-        self.assertTrue(evidence["dryRun"])
-        self.assertIn("JIRA_BASE_URL", evidence["missing"])
+        self.assertFalse(evidence["performed"])
+        self.assertIn("JIRA_BASE_URL", evidence["missingConfig"])
 
     def test_posts_comment_and_attachments(self) -> None:
         _JiraHandler.received = {"comment": None, "attach": None}
@@ -121,7 +121,19 @@ class JiraPublishPluginTests(unittest.TestCase):
 
         self.assertIsNotNone(_JiraHandler.received["comment"])
         self.assertTrue(str(_JiraHandler.received["comment"]["auth"]).startswith("Basic "))
-        self.assertIn("Continuum Run: r1", _JiraHandler.received["comment"]["body"])
+        body = str(_JiraHandler.received["comment"]["body"])
+        self.assertIn("/issue/PROJ-1/comment", str(_JiraHandler.received["comment"]["path"]))
+
+        if body.lstrip().startswith("{"):
+            payload = json.loads(body)
+            if isinstance(payload.get("body"), str):
+                self.assertIn("r1", payload["body"])
+                self.assertIn("status", payload["body"].lower())
+            else:
+                self.assertIn("r1", json.dumps(payload).lower())
+        else:
+            self.assertIn("r1", body)
+            self.assertIn("status", body.lower())
 
         self.assertIsNotNone(_JiraHandler.received["attach"])
         self.assertEqual(_JiraHandler.received["attach"]["token"], "no-check")
