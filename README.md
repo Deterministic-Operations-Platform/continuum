@@ -22,7 +22,7 @@ continuum status
 
 `continuum run <scenario> [--run-id ...]`
 - Execute a scenario deterministically and emit a run bundle under `runs/<run-id>/`.
-- Supports resume/selective execution, `--max-parallel`, RBAC actor/roles, approval-file governance checks, and policy-gated evidence checks (`policy.yaml` or `--policy-file`).
+- Supports resume/selective execution, optional replay of succeeded steps (`--replay-succeeded`), `--max-parallel`, RBAC actor/roles, approval-file governance checks, and policy-gated evidence checks (`policy.yaml` or `--policy-file`).
 
 `continuum golden-run [--scenario scenarios/fednow/rtpay-golden.yaml]`
 - One command for the FedNow/RTPay golden path: preflight, AppLauncher ensure, Postman run, Mongo verify, log correlation, Jira comment/attach, and publish-ready evidence.
