@@ -150,6 +150,44 @@ class RuntimeResumeTests(unittest.TestCase):
         self.assertEqual(resumed_summary["steps"][1]["status"], "failed")
         self.assertEqual(resumed_summary["steps"][1]["index"], 1)
 
+    def test_resume_with_replay_marks_replayed_step_and_writes_evidence(self) -> None:
+        base_run = "test-resume-base-4"
+        resumed_run = "test-resume-next-4"
+        self.addCleanup(lambda: shutil.rmtree(REPO_ROOT / "runs" / base_run, ignore_errors=True))
+        self.addCleanup(lambda: shutil.rmtree(REPO_ROOT / "runs" / resumed_run, ignore_errors=True))
+
+        runtime = DeterministicRuntime(PluginRegistry([_ExportPlugin(), _ConsumePlugin()]), EvidenceCollector())
+        scenario = Scenario(
+            name="resume-replay",
+            rail="test",
+            vars={},
+            steps=(
+                ScenarioStep(name="Export", type="test.export", key="run_postman", with_={"value": "alpha"}),
+                ScenarioStep(name="Consume", type="test.consume", key="consume", with_={"msg": "${vars.token}"}),
+            ),
+            cleanup_steps=(),
+        )
+
+        runtime.execute(scenario=scenario, scenario_source=Path("tests/fixture.yaml"), scenario_text="x", run_id=base_run)
+        replay_summary = runtime.execute(
+            scenario=scenario,
+            scenario_source=Path("tests/fixture.yaml"),
+            scenario_text="x",
+            run_id=resumed_run,
+            resume_id=base_run,
+            replay_succeeded=True,
+        )
+
+        self.assertEqual(replay_summary["steps"][0]["status"], "succeeded")
+        self.assertEqual(replay_summary["steps"][0]["executionMode"], "replay")
+        self.assertEqual(replay_summary["steps"][0]["replayFromRunId"], base_run)
+        self.assertEqual(replay_summary["steps"][1]["status"], "succeeded")
+
+        replay_path = REPO_ROOT / "runs" / resumed_run / "evidence" / "01-Export" / "replay.json"
+        replay_evidence = json.loads(replay_path.read_text(encoding="utf-8"))
+        self.assertEqual(replay_evidence["executionMode"], "replay")
+        self.assertEqual(replay_evidence["replayFromRunId"], base_run)
+
 
 if __name__ == "__main__":
     unittest.main()

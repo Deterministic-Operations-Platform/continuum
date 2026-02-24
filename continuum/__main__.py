@@ -62,6 +62,7 @@ def main() -> None:
     run.add_argument("--resume", dest="resume_run_id", default=None, help="Resume from a previous run id")
     run.add_argument("--rerun", dest="rerun_selectors", action="append", default=[], help="Step selector to force rerun")
     run.add_argument("--from-failure", dest="from_failure", action="store_true", help="Start execution from first failed step in resumed run")
+    run.add_argument("--replay-succeeded", dest="replay_succeeded", action="store_true", help="Replay succeeded steps from resumed run instead of marking skipped")
     run.add_argument("--no-services", dest="no_services", action="store_true", help="Skip automatic scenario-level services orchestration")
     run.add_argument("--stop-services", dest="stop_services", action="store_true", help="Stop scenario services at end of run")
     run.add_argument("--reuse-sessions", dest="reuse_sessions", action="store_true", default=True, help="Allow service session reuse (default)")
@@ -153,6 +154,7 @@ def main() -> None:
                 no_cleanup=args.no_cleanup,
                 rerun_selectors=tuple(args.rerun_selectors),
                 from_failure=args.from_failure,
+                replay_succeeded=args.replay_succeeded,
                 max_parallel=int(args.max_parallel),
                 actor=args.actor,
                 actor_roles=tuple(args.roles),

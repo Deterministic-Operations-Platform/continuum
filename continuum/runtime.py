@@ -220,6 +220,7 @@ class DeterministicRuntime:
         resume_id: str | None = None,
         rerun_selectors: tuple[str, ...] | list[str] = (),
         from_failure: bool = False,
+        replay_succeeded: bool = False,
         from_selector: str | None = None,
         to_selector: str | None = None,
         only_selectors: tuple[str, ...] | list[str] = (),
@@ -329,7 +330,17 @@ class DeterministicRuntime:
                 from_failure=from_failure,
                 previous_summary=previous_summary,
             )
-            summary_steps, failure = self._execute_steps(scenario=scenario, context=context, selection_map=selection, dependency_map=dep_map, max_parallel=max_parallel, audit=audit)
+            summary_steps, failure = self._execute_steps(
+                scenario=scenario,
+                context=context,
+                selection_map=selection,
+                dependency_map=dep_map,
+                max_parallel=max_parallel,
+                audit=audit,
+                previous_summary=previous_summary,
+                replay_succeeded=replay_succeeded,
+                resumed_from=effective_resume_id,
+            )
         except ContinuumError as err:
             failure = {"message": str(err), "class": err.failure_class.value}
             if isinstance(err, ScenarioValidationError):
@@ -571,6 +582,9 @@ class DeterministicRuntime:
         dependency_map: dict[int, set[int]],
         max_parallel: int,
         audit: _AuditLog,
+        previous_summary: dict[str, Any] | None,
+        replay_succeeded: bool,
+        resumed_from: str | None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         steps = scenario.steps
         summaries: list[dict[str, Any] | None] = [None] * len(steps)
@@ -579,14 +593,27 @@ class DeterministicRuntime:
         failure: dict[str, Any] | None = None
         lock = Lock()
 
+        previous_by_key = self._build_previous_step_map(previous_summary)
         for index in sorted(list(pending)):
             reason = selection_map.get(index)
             if reason is None:
                 continue
-            summaries[index] = self._skipped_step(steps[index], index, reason, context=context)
+            if reason == "resume:succeeded" and replay_succeeded:
+                replayed = self._replay_step(
+                    step=steps[index],
+                    step_index=index,
+                    previous_by_key=previous_by_key,
+                    resumed_from=resumed_from,
+                    context=context,
+                )
+                summaries[index] = replayed
+                self._merge_step_outputs(step=steps[index], step_index=index, step_summary=replayed, context=context, lock=lock)
+                audit.append("step.replayed", {"index": index, "key": _step_key(steps[index], index), "resumedFrom": resumed_from})
+            else:
+                summaries[index] = self._skipped_step(steps[index], index, reason, context=context)
+                audit.append("step.skipped", {"index": index, "key": _step_key(steps[index], index), "reason": reason})
             pending.remove(index)
             completed.add(index)
-            audit.append("step.skipped", {"index": index, "key": _step_key(steps[index], index), "reason": reason})
 
         active: dict[Future[dict[str, Any]], tuple[int, set[str]]] = {}
         active_resources: set[str] = set()
@@ -881,6 +908,14 @@ class DeterministicRuntime:
                     out[item["key"]] = item["status"]
         return out
 
+    def _build_previous_step_map(self, summary: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        if isinstance(summary, dict):
+            for item in summary.get("steps", []):
+                if isinstance(item, dict) and isinstance(item.get("key"), str):
+                    out[item["key"]] = item
+        return out
+
     def _first_failed_index(self, summary: dict[str, Any] | None) -> int | None:
         if not isinstance(summary, dict):
             return None
@@ -905,6 +940,37 @@ class DeterministicRuntime:
             if self._matches_selector(step, index, selector):
                 return index
         return None
+
+    def _replay_step(
+        self,
+        *,
+        step: ScenarioStep,
+        step_index: int,
+        previous_by_key: dict[str, dict[str, Any]],
+        resumed_from: str | None,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        key = _step_key(step, step_index)
+        prior = previous_by_key.get(key)
+        if not isinstance(prior, dict):
+            return self._skipped_step(step, step_index, "resume:missing", context=context)
+        payload = {
+            "index": step_index,
+            "name": step.name,
+            "key": key,
+            "type": step.type,
+            "phase": str(prior.get("phase") or "execution"),
+            "status": "succeeded",
+            "ok": True,
+            "attempts": list(prior.get("attempts") or []),
+            "publish": dict(prior.get("publish") or {}),
+            "exports": dict(prior.get("exports") or {}),
+            "traceId": str(context.get("vars", {}).get("traceId") or ""),
+            "executionMode": "replay",
+            "replayFromRunId": resumed_from,
+        }
+        context["write_json"](context["step_dir"](step_index, step.name), "replay.json", payload)
+        return payload
 
     def _merge_step_outputs(
         self,
