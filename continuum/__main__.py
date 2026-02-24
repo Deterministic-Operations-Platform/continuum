@@ -17,7 +17,7 @@ from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
 from continuum.scenario import load_scenario_document
 from continuum.schema import validate_scenario_schema
-from continuum.signing import verify_bundle_signature
+from continuum.verify import cmd_verify
 
 
 def _status_payload() -> dict[str, Any]:
@@ -41,33 +41,6 @@ def _status_payload() -> dict[str, Any]:
         "commands": ["status", "run", "golden-run", "validate", "plan", "publish", "verify", "ci", "serve"],
         "plugins": sorted(PluginRegistry().available_plugin_names()),
     }
-
-
-def cmd_verify(run_id: str, runs_dir: str) -> int:
-    run_dir = Path(runs_dir) / run_id
-    summary_path = run_dir / "summary.json"
-    if not summary_path.is_file():
-        print(f"run not found: {run_dir}")
-        return 2
-
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    policy_payload = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
-    if "ok" in policy_payload:
-        policy_ok = bool(policy_payload.get("ok", False))
-        missing = policy_payload.get("missing")
-        if not isinstance(missing, list):
-            missing = []
-    else:
-        post = policy_payload.get("post") if isinstance(policy_payload.get("post"), dict) else {}
-        policy_ok = bool(post.get("ok", False))
-        missing = post.get("violations")
-        if not isinstance(missing, list):
-            missing = []
-    ok_sig, sig_msg = verify_bundle_signature(run_dir)
-
-    print(f"policy.ok={policy_ok} missing={missing}")
-    print(f"signature.ok={ok_sig} msg={sig_msg}")
-    return 0 if (policy_ok and ok_sig) else 2
 
 
 def main() -> None:
@@ -278,7 +251,11 @@ def main() -> None:
         return
 
     if args.cmd == "verify":
-        raise SystemExit(cmd_verify(run_id=args.run_id, runs_dir=args.runs_dir))
+        try:
+            raise SystemExit(cmd_verify(run_id=args.run_id, runs_dir=args.runs_dir))
+        except FileNotFoundError as err:
+            rich_print(f"[red]VERIFY FAIL[/red] {err}")
+            raise SystemExit(2) from err
 
     if args.cmd == "ci":
         scenario_path = Path(args.scenario)

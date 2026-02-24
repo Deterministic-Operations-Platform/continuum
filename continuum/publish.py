@@ -17,6 +17,7 @@ _REDACTION_PATTERNS = [
     (r"(?i)(cookie\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
     (r"(?i)(authorization\s*:\s*bearer\s+)([^\s,;]+)", r"\1[REDACTED]"),
 ]
+_REDACTION_SKIP_FILES = {"manifest.json", "bundle_signature.json", "manifest.sha256"}
 
 
 @dataclass
@@ -901,6 +902,8 @@ def _status_tone(status: str) -> str:
 def _redact_tree(path: Path) -> None:
     for file_path in path.rglob("*"):
         if not file_path.is_file():
+            continue
+        if file_path.name in _REDACTION_SKIP_FILES:
             continue
         if file_path.name.endswith((".tmp", ".bak")) or file_path.name == "debug.tmp":
             file_path.unlink(missing_ok=True)
