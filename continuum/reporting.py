@@ -91,17 +91,24 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
         policy_notes = "none"
 
     signature_manifest_hash = ""
+    signature_key_id = ""
     signature_hex = ""
     signature_key_id = ""
     if isinstance(signature, dict):
         signature_manifest_hash = str(signature.get("manifest_sha256") or "")
+        signature_key_id = str(signature.get("keyId") or "")
         signature_hex = str(signature.get("signature") or "")
         signature_key_id = str(signature.get("keyId") or "")
 
-    policy_ok = bool(policy.get("ok", False))
-    policy_missing = policy.get("missing") if isinstance(policy.get("missing"), list) else []
-    policy_gate_label = "PASS" if policy_ok else "FAIL"
-    policy_missing_text = ", ".join(str(item) for item in policy_missing) if policy_missing else "none"
+    policy_state = "PASS" if bool(policy.get("ok")) else "FAIL"
+    policy_missing_text = ""
+    if gate_missing:
+        policy_missing_text = f"(missing: {', '.join(str(v) for v in gate_missing)})"
+    signature_summary = (
+        f"keyId={signature_key_id or 'n/a'} manifest_sha256={signature_manifest_hash or 'n/a'}"
+        if (signature_key_id or signature_manifest_hash)
+        else "not present"
+    )
 
     status_tone = _status_tone(status)
 
@@ -490,14 +497,17 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     </section>
 
     <section>
-      <h2>Tamper Evidence</h2>
-      <div class='mini-panel'>
-        <div class='title'>Manifest Hash</div>
-        <code class='inline-block'>__MANIFEST_HASH__</code>
-      </div>
-      <div class='mini-panel' style='margin-top: 10px;'>
-        <div class='title'>Bundle Signature</div>
-        <code class='inline-block'>__BUNDLE_SIGNATURE__</code>
+      <h2>Integrity</h2>
+      <div class='split'>
+        <div class='mini-panel'>
+          <div class='title'>Policy Missing</div>
+          <div>__POLICY_NOTES__</div>
+        </div>
+        <div class='mini-panel'>
+          <div class='title'>Signature Metadata</div>
+          <div>keyId: <code class='inline-block'>__SIGNATURE_KEY_ID__</code></div>
+          <div style='margin-top: 8px;'>manifest_sha256: <code class='inline-block'>__MANIFEST_HASH__</code></div>
+        </div>
       </div>
     </section>
 
@@ -534,8 +544,12 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     html = html.replace("__TIMELINE_ITEMS__", "\n            ".join(timeline_items) or "<li class='timeline-item'><span class='timeline-dot timeline-muted'></span><div><div class='timeline-title'>No steps recorded</div><div class='timeline-meta'>Run summary did not include step telemetry.</div></div></li>")
     html = html.replace("__STEP_ROWS__", "\n            ".join(step_rows) or "<tr><td colspan='6'>No steps recorded.</td></tr>")
     html = html.replace("__POLICY_NOTES__", policy_notes)
+    html = html.replace("__POLICY_STATE__", escape(policy_state))
+    html = html.replace("__POLICY_MISSING__", escape(policy_missing_text))
+    html = html.replace("__SIGNATURE_SUMMARY__", escape(signature_summary))
     html = html.replace("__FAILURE_MESSAGE__", escape(str(failure.get("message") or "none")))
     html = html.replace("__MANIFEST_HASH__", escape(signature_manifest_hash or "n/a"))
+    html = html.replace("__SIGNATURE_KEY_ID__", escape(signature_key_id or "n/a"))
     html = html.replace("__BUNDLE_SIGNATURE__", escape(signature_hex or "n/a"))
     html = html.replace("__ARTIFACT_ROWS__", "\n            ".join(artifact_rows) or "<tr><td colspan='3'>No artifacts listed.</td></tr>")
     return html

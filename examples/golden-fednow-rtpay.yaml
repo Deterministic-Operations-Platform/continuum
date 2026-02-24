@@ -49,6 +49,16 @@ steps:
       apiVersion: 2
       softFail: false
 
+  - name: publish_to_jira
+    type: jira.publish
+    with:
+      issueKey: ${env.JIRA_ISSUE_KEY}
+      attach:
+        - report.html
+        - summary.json
+        - manifest.json
+        - bundle_signature.json
+
 cleanup_steps:
   - name: stop-applauncher
     type: applauncher.session.stop

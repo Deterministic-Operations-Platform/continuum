@@ -1,130 +1,131 @@
 import json
 import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from continuum.plugins import JiraPublishPlugin
 from tests._tmpdir import make_temp_dir, remove_temp_dir
 
 
+class _JiraHandler(BaseHTTPRequestHandler):
+    received = {"comment": None, "attach": None}
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(length) if length else b""
+
+        if self.path.endswith("/comment"):
+            _JiraHandler.received["comment"] = {
+                "path": self.path,
+                "auth": self.headers.get("Authorization"),
+                "body": body.decode("utf-8", errors="replace"),
+            }
+            self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"id":"10000"}')
+            return
+
+        if self.path.endswith("/attachments"):
+            _JiraHandler.received["attach"] = {
+                "path": self.path,
+                "token": self.headers.get("X-Atlassian-Token"),
+                "ctype": self.headers.get("Content-Type"),
+                "auth": self.headers.get("Authorization"),
+                "raw": body[:2000],
+            }
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'[{"id":"att-1"}]')
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *_args, **_kwargs):
+        return
+
+
 class JiraPublishPluginTests(unittest.TestCase):
-    def test_publish_posts_comment_and_attachments(self) -> None:
-        root = make_temp_dir("jira-publish")
-        self.addCleanup(lambda: remove_temp_dir(root))
-        run_dir = root / "runs" / "run-1"
-        run_dir.mkdir(parents=True)
-        (run_dir / "report.html").write_text("<h1>report</h1>", encoding="utf-8")
-        (run_dir / "summary.json").write_text("{}", encoding="utf-8")
+    def setUp(self) -> None:
+        self.root = make_temp_dir("jira")
+        self.addCleanup(lambda: remove_temp_dir(self.root))
 
-        requests: list[dict[str, str]] = []
+        self.run_dir = self.root / "runs" / "r1"
+        self.run_dir.mkdir(parents=True)
 
-        class _Handler(BaseHTTPRequestHandler):
-            def do_POST(self):  # noqa: N802
-                length = int(self.headers.get("Content-Length", "0"))
-                body = self.rfile.read(length).decode("utf-8", errors="replace")
-                requests.append({"path": self.path, "body": body})
-                if self.path.endswith("/comment"):
-                    payload = json.dumps({"id": "comment-1"}).encode("utf-8")
-                    self.send_response(201)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(payload)))
-                    self.end_headers()
-                    self.wfile.write(payload)
-                    return
-                payload = json.dumps([{"id": "attachment-1"}]).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
+        (self.run_dir / "summary.json").write_text(json.dumps({"status": "succeeded", "policy": {"ok": True}}), encoding="utf-8")
+        (self.run_dir / "manifest.json").write_text("{}", encoding="utf-8")
+        (self.run_dir / "bundle_signature.json").write_text(json.dumps({"keyId": "ci", "manifest_sha256": "abc"}), encoding="utf-8")
+        (self.run_dir / "report.html").write_text("<h1>report</h1>", encoding="utf-8")
 
-            def log_message(self, format, *args):  # type: ignore[override]
-                return
+        self.step_root = self.run_dir / "evidence"
+        self.step_root.mkdir(parents=True, exist_ok=True)
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    def _ctx(self, env: dict) -> dict:
+        def step_dir(i: int, name: str) -> str:
+            return str(self.run_dir / "evidence" / f"{i+1:02d}-{name.replace(' ', '_')}")
+
+        def write_json(step_path: str, filename: str, payload: dict) -> str:
+            p = Path(step_path) / filename
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            return str(p)
+
+        return {
+            "run_id": "r1",
+            "run_dir": str(self.run_dir),
+            "vars": {"traceId": "trace-1", "issueKey": "PROJ-1"},
+            "env": env,
+            "step_dir": step_dir,
+            "write_json": write_json,
+        }
+
+    def test_dry_run_when_env_missing(self) -> None:
+        result = JiraPublishPlugin().run(
+            step_name="jira publish",
+            step_with={"attach": ["report.html"]},
+            ctx=self._ctx(env={}),
+            step_index=0,
+        )
+        self.assertTrue(result.ok)
+        evidence = json.loads(Path(result.evidence_paths[0]).read_text(encoding="utf-8"))
+        self.assertTrue(evidence["dryRun"])
+        self.assertIn("JIRA_BASE_URL", evidence["missing"])
+
+    def test_posts_comment_and_attachments(self) -> None:
+        _JiraHandler.received = {"comment": None, "attach": None}
+        server = HTTPServer(("127.0.0.1", 0), _JiraHandler)
+        port = server.server_port
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
 
-        evidence_root = root / "evidence"
-
-        def _ctx_step_dir(index: int, name: str) -> str:
-            return str(evidence_root / f"{index + 1:02d}-{name}")
-
-        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
-            output = Path(step_path) / filename
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-            return str(output)
-
-        ctx = {
-            "step_dir": _ctx_step_dir,
-            "write_json": _ctx_write_json,
-            "vars": {},
-            "run_id": "run-1",
-            "run_dir": str(run_dir),
-            "env": {
-                "CONTINUUM_ENABLE_LIVE_CONNECTORS": "1",
-                "JIRA_BASE_URL": f"http://127.0.0.1:{server.server_port}",
-                "JIRA_EMAIL": "ops@example.test",
-                "JIRA_API_TOKEN": "secret",
-                "JIRA_ISSUE_KEY": "PAY-101",
-                "CONTINUUM_SITE_URL": "https://site.example.test",
-            },
+        env = {
+            "JIRA_BASE_URL": f"http://127.0.0.1:{port}",
+            "JIRA_EMAIL": "a@b.com",
+            "JIRA_API_TOKEN": "token",
+            "CONTINUUM_SITE_URL": "http://site.local",
         }
 
         result = JiraPublishPlugin().run(
-            step_name="publish",
-            step_with={"attach": ["report.html", "summary.json"], "apiVersion": 2, "softFail": False},
-            ctx=ctx,
+            step_name="jira publish",
+            step_with={"issueKey": "PROJ-1", "attach": ["report.html"], "apiVersion": 2},
+            ctx=self._ctx(env=env),
             step_index=0,
         )
-
         self.assertTrue(result.ok)
-        self.assertFalse(result.details["dryRun"])
-        self.assertEqual(result.details["commentId"], "comment-1")
-        self.assertEqual(len(result.details["uploaded"]), 2)
-        self.assertEqual(len(requests), 3)
-        self.assertIn("/rest/api/2/issue/PAY-101/comment", requests[0]["path"])
 
-    def test_publish_dry_runs_when_jira_env_missing(self) -> None:
-        root = make_temp_dir("jira-publish-dry")
-        self.addCleanup(lambda: remove_temp_dir(root))
-        run_dir = root / "runs" / "run-2"
-        run_dir.mkdir(parents=True)
-        (run_dir / "report.html").write_text("<h1>report</h1>", encoding="utf-8")
+        self.assertIsNotNone(_JiraHandler.received["comment"])
+        self.assertTrue(str(_JiraHandler.received["comment"]["auth"]).startswith("Basic "))
+        self.assertIn("Continuum Run: r1", _JiraHandler.received["comment"]["body"])
 
-        def _ctx_step_dir(index: int, name: str) -> str:
-            return str(root / "evidence" / f"{index + 1:02d}-{name}")
-
-        def _ctx_write_json(step_path: str, filename: str, payload: dict) -> str:
-            output = Path(step_path) / filename
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-            return str(output)
-
-        ctx = {
-            "step_dir": _ctx_step_dir,
-            "write_json": _ctx_write_json,
-            "vars": {},
-            "run_id": "run-2",
-            "run_dir": str(run_dir),
-            "env": {},
-        }
-
-        result = JiraPublishPlugin().run(
-            step_name="publish",
-            step_with={"attach": ["report.html"]},
-            ctx=ctx,
-            step_index=0,
-        )
-
-        self.assertTrue(result.ok)
-        self.assertTrue(result.details["dryRun"])
-        self.assertIn("JIRA_BASE_URL", result.details["missing"])
+        self.assertIsNotNone(_JiraHandler.received["attach"])
+        self.assertEqual(_JiraHandler.received["attach"]["token"], "no-check")
+        self.assertIn("multipart/form-data", str(_JiraHandler.received["attach"]["ctype"]))
 
 
 if __name__ == "__main__":

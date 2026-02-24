@@ -25,14 +25,14 @@ class PublishCommandTests(unittest.TestCase):
                     "status": "succeeded",
                     "startedAt": "2026-01-01T00:00:00Z",
                     "endedAt": "2026-01-01T00:01:00Z",
-                    "policy": {"ok": True, "missing": []},
+                    "policy": {"ok": True},
                 }
             ),
             encoding="utf-8",
         )
         (run_dir / "context.json").write_text(json.dumps({"vars": {"traceId": "trace-1"}}), encoding="utf-8")
         (run_dir / "manifest.json").write_text(json.dumps({"git_head": "abcde"}), encoding="utf-8")
-        (run_dir / "bundle_signature.json").write_text(json.dumps({"keyId": "ci", "manifest_sha256": "deadbeef"}), encoding="utf-8")
+        (run_dir / "bundle_signature.json").write_text(json.dumps({"keyId": "ci", "manifest_sha256": "abc"}), encoding="utf-8")
         (run_dir / "debug.tmp").write_text("secret", encoding="utf-8")
 
         publish_run(run_id=run_id, runs_dir=runs_dir, site_dir=site_dir)
@@ -47,8 +47,10 @@ class PublishCommandTests(unittest.TestCase):
         index_json = json.loads((site_dir / "runs" / "index.json").read_text(encoding="utf-8"))
         self.assertEqual(index_json[0]["runId"], run_id)
         self.assertEqual(index_json[0]["traceId"], "trace-1")
-        self.assertEqual(index_json[0]["policyOk"], True)
-        self.assertEqual(index_json[0]["signed"], True)
+        self.assertTrue(index_json[0]["policyOk"])
+        self.assertTrue(index_json[0]["signed"])
+        self.assertEqual(index_json[0]["signatureKeyId"], "ci")
+        self.assertEqual(index_json[0]["manifestSha256"], "abc")
 
         published_report = (published_run_dir / "report.html").read_text(encoding="utf-8")
         self.assertIn("[REDACTED]", published_report)

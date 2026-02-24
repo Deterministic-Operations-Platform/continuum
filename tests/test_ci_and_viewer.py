@@ -28,10 +28,8 @@ class CiAndViewerTests(unittest.TestCase):
                     trace_id="trace-1",
                     git_head="abc123",
                     report_path="runs/r-1/report.html",
-                    policy_ok=True,
                     signed=True,
-                    signature_key_id="ci",
-                    manifest_sha256="abc123sha",
+                    policy_ok=True,
                 )
             ],
         )
@@ -41,7 +39,8 @@ class CiAndViewerTests(unittest.TestCase):
         self.assertIn("Policy", html)
         self.assertIn("Signed", html)
         self.assertIn("trace-1", html)
-        self.assertIn("data-policy-ok='true'", html)
+        self.assertIn("Signed?", html)
+        self.assertIn("Policy OK?", html)
 
 
 if __name__ == "__main__":

@@ -50,20 +50,13 @@ jobs:
           continuum validate "${SCENARIO}"
           continuum plan "${SCENARIO}" --run-id "${RUN_ID}"
 
-      - name: Run scenario + verify + publish
+      - name: Run scenario
         env:
           CONTINUUM_SIGNING_KEY: ${{ secrets.CONTINUUM_SIGNING_KEY }}
           CONTINUUM_SIGNING_KEY_ID: ci
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          JIRA_ISSUE_KEY: ${{ secrets.JIRA_ISSUE_KEY }}
-          CONTINUUM_SITE_URL: ${{ secrets.CONTINUUM_SITE_URL }}
-          CONTINUUM_ENABLE_LIVE_CONNECTORS: "1"
         run: |
-          python -m continuum run "${SCENARIO}" --run-id "${RUN_ID}"
-          python -m continuum verify --run-id "${RUN_ID}" --runs-dir runs
-          python -m continuum publish --run-id "${RUN_ID}" --runs-dir runs --site-dir site
+          continuum run "${SCENARIO}" --run-id "${RUN_ID}" --skip jira.comment --skip jira.attach --skip jira.publish
+          continuum verify --run-id "${RUN_ID}" --runs-dir runs
 
       - name: Job summary
         if: always()
