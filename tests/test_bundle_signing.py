@@ -77,7 +77,7 @@ class BundleSigningTests(unittest.TestCase):
             clear=True,
         ):
             payload = write_bundle_signature(run_dir)
-            self.assertEqual(payload.get("algorithm"), "Ed25519(manifest_sha256)")
+            self.assertEqual(payload.get("algorithm"), "ED25519(manifest_sha256)")
             self.assertEqual(payload.get("publicKeyId"), meta["publicKeyId"])
 
         with patch.dict(

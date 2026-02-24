@@ -9,6 +9,7 @@ from typing import Any
 import re
 
 from continuum.reporting import ensure_report
+from continuum.signing import verify_bundle_signature
 
 
 _REDACTION_PATTERNS = [
@@ -33,6 +34,8 @@ class PublishedRun:
     signature_key_id: str
     manifest_sha256: str
     report_path: str
+    signature_verified: bool | None
+    signature_verify_msg: str
 
 
 def publish_run(*, run_id: str, runs_dir: Path = Path("runs"), site_dir: Path = Path("site"), keep_runs: int = 25) -> Path:
@@ -97,7 +100,17 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
         git_head = str(manifest.get("git_head") or manifest.get("gitHead") or "")
         policy = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
         policy_post = policy.get("post") if isinstance(policy.get("post"), dict) else {}
-        signed = bool(signature.get("signature"))
+        signed = bool(signature.get("signature") or signature.get("signatureB64"))
+        signature_verified: bool | None = None
+        signature_verify_msg = "unknown"
+        if signature:
+            try:
+                verify_ok, verify_msg = verify_bundle_signature(summary_path.parent)
+                signature_verified = bool(verify_ok)
+                signature_verify_msg = verify_msg
+            except Exception as err:
+                signature_verified = False
+                signature_verify_msg = f"error: {err}"
         policy_ok = bool(policy_post.get("ok", policy.get("ok", False)))
 
         results.append(
@@ -113,6 +126,8 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
                 signature_key_id=str(signature.get("keyId") or ""),
                 manifest_sha256=str(signature.get("manifest_sha256") or ""),
                 report_path=f"runs/{run_id}/report.html",
+                signature_verified=signature_verified,
+                signature_verify_msg=signature_verify_msg,
             )
         )
     return results
@@ -135,6 +150,8 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             "signed": item.signed,
             "signatureKeyId": item.signature_key_id,
             "manifestSha256": item.manifest_sha256,
+            "signatureVerified": item.signature_verified,
+            "signatureVerifyMsg": item.signature_verify_msg,
             "report": item.report_path,
             "summary": f"runs/{item.run_id}/summary.json",
             "context": f"runs/{item.run_id}/context.json",
@@ -168,6 +185,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
                 item.started_at,
                 item.ended_at,
                 "signed" if item.signed else "unsigned",
+                "verified" if item.signature_verified is True else ("verify-fail" if item.signature_verified is False else "verify-unknown"),
                 "policy ok" if item.policy_ok else "policy fail",
             ]
         ).lower()
@@ -175,6 +193,15 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
         policy_tone = "success" if item.policy_ok else "danger"
         signed_label = "YES" if item.signed else "NO"
         signed_tone = "success" if item.signed else "muted"
+        if item.signature_verified is True:
+            verified_label = "OK"
+            verified_tone = "success"
+        elif item.signature_verified is False:
+            verified_label = "FAIL"
+            verified_tone = "danger"
+        else:
+            verified_label = "UNKNOWN"
+            verified_tone = "muted"
         rows.append(
             f"<tr data-row='run' data-status='{escape(status_tone)}' data-status-value='{escape(item.status.lower())}' "
             f"data-run-id='{escape(item.run_id)}' data-status-label='{escape(item.status)}' "
@@ -185,10 +212,12 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             f"<td><a class='run-link' href='runs/{escape(item.run_id)}/report.html'>{escape(item.run_id)}</a></td>"
             f"<td><span class='status-badge status-{escape(status_tone)}'>{escape(item.status)}</span></td>"
             f"<td><span class='status-badge status-{'success' if item.policy_ok else 'danger'}'>{'PASS' if item.policy_ok else 'FAIL'}</span></td>"
-            f"<td><span class='status-badge status-{'success' if item.signed else 'muted'}'>{'YES' if item.signed else 'NO'}</span></td>"
+            f"<td><span class='status-badge status-{signed_tone}'>{signed_label}</span></td>"
+            f"<td><span class='status-badge status-{verified_tone}' title='{escape(item.signature_verify_msg)}'>{verified_label}</span></td>"
             f"<td class='mono'>{escape(item.trace_id) or 'n/a'}</td>"
             f"<td><code>{escape(item.git_head) or 'n/a'}</code></td>"
             f"<td>{'Yes' if item.signed else 'No'}</td>"
+            f"<td>{escape(verified_label)}</td>"
             f"<td>{'Yes' if item.policy_ok else 'No'}</td>"
             f"<td class='mono'>{escape(item.started_at) or 'n/a'}</td>"
             f"<td class='mono'>{escape(item.ended_at) or 'n/a'}</td>"
@@ -675,10 +704,10 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
       </div>
       <div class='table-wrap'>
         <table id='runs'>
-          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Signed?</th><th>Policy OK?</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
+          <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Policy</th><th>Signed</th><th>Verified</th><th>Trace ID</th><th>Git HEAD</th><th>Signed?</th><th>Verified?</th><th>Policy OK?</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
           <tbody>
             __ROWS__
-            <tr id='emptyRow' hidden><td colspan='10'>No runs match the current filter.</td></tr>
+            <tr id='emptyRow' hidden><td colspan='14'>No runs match the current filter.</td></tr>
           </tbody>
         </table>
       </div>

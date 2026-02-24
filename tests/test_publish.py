@@ -32,7 +32,7 @@ class PublishCommandTests(unittest.TestCase):
         )
         (run_dir / "context.json").write_text(json.dumps({"vars": {"traceId": "trace-1"}}), encoding="utf-8")
         (run_dir / "manifest.json").write_text(json.dumps({"git_head": "abcde"}), encoding="utf-8")
-        (run_dir / "bundle_signature.json").write_text(json.dumps({"keyId": "ci", "manifest_sha256": "abc"}), encoding="utf-8")
+        (run_dir / "bundle_signature.json").write_text(json.dumps({"algorithm": "HMAC-SHA256(manifest_sha256)", "keyId": "ci", "manifest_sha256": "abc", "signature": "deadbeef"}), encoding="utf-8")
         (run_dir / "debug.tmp").write_text("secret", encoding="utf-8")
 
         publish_run(run_id=run_id, runs_dir=runs_dir, site_dir=site_dir)
@@ -49,6 +49,8 @@ class PublishCommandTests(unittest.TestCase):
         self.assertEqual(index_json[0]["traceId"], "trace-1")
         self.assertTrue(index_json[0]["policyOk"])
         self.assertTrue(index_json[0]["signed"])
+        self.assertIn("signatureVerified", index_json[0])
+        self.assertIn("signatureVerifyMsg", index_json[0])
         self.assertEqual(index_json[0]["signatureKeyId"], "ci")
         self.assertEqual(index_json[0]["manifestSha256"], "abc")
 
