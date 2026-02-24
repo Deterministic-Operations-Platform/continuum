@@ -246,7 +246,7 @@ def _infer_required_steps(step_with: dict[str, Any], *, labels: list[str], compo
         "mongo": ["verify_mongo"],
         "sql": ["verify_sql"],
         "logs": ["collect_logs"],
-        "jira": ["jira.comment", "jira.attach"],
+        "jira": ["jira.comment", "jira.attach", "jira.publish"],
     }
     required_steps: set[str] = {str(v).strip() for v in (step_with.get("requiredSteps") or []) if str(v).strip()}
     tokens = [*labels, *components]
@@ -1271,6 +1271,104 @@ class JiraAttachPlugin:
         return StepResult(ok=ok, details=details, evidence_paths=[path])
 
 
+class JiraPublishPlugin:
+    type = "jira.publish"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        run_dir = Path(str(ctx.get("run_dir") or ""))
+        summary_path = run_dir / "summary.json"
+        manifest_path = run_dir / "manifest.json"
+        signature_path = run_dir / "bundle_signature.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.is_file() else {}
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+        signature = json.loads(signature_path.read_text(encoding="utf-8")) if signature_path.is_file() else {}
+
+        policy = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
+        policy_post = policy.get("post") if isinstance(policy.get("post"), dict) else {}
+        issue_key = str(step_with.get("issueKey") or ctx.get("vars", {}).get("issueKey") or "").strip() or None
+        status = str(summary.get("status") or "unknown")
+        trace_id = str(summary.get("traceId") or ctx.get("vars", {}).get("traceId") or "")
+        post_missing = policy_post.get("violations") if isinstance(policy_post.get("violations"), list) else []
+        gate_missing = policy.get("missing") if isinstance(policy.get("missing"), list) else []
+        policy_missing = [str(item) for item in [*post_missing, *gate_missing]]
+        policy_ok = bool(policy_post.get("ok", policy.get("ok", False)))
+        key_id = str(signature.get("keyId") or "")
+        manifest_sha = str(signature.get("manifest_sha256") or "")
+
+        attach = [str(v).strip() for v in (step_with.get("attach") or []) if str(v).strip()]
+        files = resolve_attach_files({"files": attach}, str(run_dir)) if attach else []
+        report_url = str(step_with.get("reportUrl") or "").strip()
+
+        comment_lines = [
+            "Continuum provable run summary",
+            f"- status: {status}",
+            f"- traceId: {trace_id or 'n/a'}",
+            f"- policy.ok: {policy_ok}",
+            f"- policy.missing: {', '.join(policy_missing) if policy_missing else 'none'}",
+            f"- signature.keyId: {key_id or 'n/a'}",
+            f"- signature.manifest_sha256: {manifest_sha or 'n/a'}",
+        ]
+        if report_url:
+            comment_lines.append(f"- report: {report_url}")
+        body = str(step_with.get("body") or "\n".join(comment_lines))
+
+        jira_cfg, missing_env = _jira_config(step_with, ctx)
+        details: dict[str, Any] = {
+            "issueKey": issue_key,
+            "status": status,
+            "traceId": trace_id,
+            "policyOk": policy_ok,
+            "policyMissing": policy_missing,
+            "signature": {"keyId": key_id, "manifest_sha256": manifest_sha},
+            "files": files,
+            "reportUrl": report_url or None,
+            "performed": False,
+            "wouldPost": bool(issue_key),
+            "missingConfig": missing_env,
+        }
+
+        if issue_key and not missing_env:
+            status_code, payload = _jira_request_json(
+                method="POST",
+                base_url=jira_cfg["baseUrl"],
+                path=f"/rest/api/2/issue/{quote(issue_key)}/comment",
+                email=jira_cfg["email"],
+                token=jira_cfg["token"],
+                timeout_sec=int(jira_cfg["timeoutSec"]),
+                payload={"body": body},
+            )
+            uploaded: list[dict[str, Any]] = []
+            for file_path in files:
+                up_code, up_payload = _jira_request_attachment(
+                    base_url=jira_cfg["baseUrl"],
+                    issue_key=issue_key,
+                    file_path=file_path,
+                    email=jira_cfg["email"],
+                    token=jira_cfg["token"],
+                    timeout_sec=int(jira_cfg["timeoutSec"]),
+                )
+                attachment_payload = up_payload if isinstance(up_payload, list) else [up_payload]
+                attachment_id = None
+                if attachment_payload and isinstance(attachment_payload[0], dict):
+                    attachment_id = attachment_payload[0].get("id")
+                uploaded.append({"path": file_path, "statusCode": up_code, "attachmentId": attachment_id})
+
+            details.update(
+                {
+                    "performed": True,
+                    "wouldPost": True,
+                    "statusCode": status_code,
+                    "commentId": payload.get("id") if isinstance(payload, dict) else None,
+                    "uploaded": uploaded,
+                }
+            )
+        else:
+            details["note"] = "jira.publish ran in dry-run mode (missing issue key or Jira environment configuration)"
+
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "jira_publish.json", details)
+        return StepResult(ok=True, details=details, evidence_paths=[path])
+
+
 class GitBranchPlugin:
     type = "git.branch"
 
@@ -1614,6 +1712,7 @@ class PluginRegistry:
             JiraFetchPlugin(),
             JiraCommentPlugin(),
             JiraAttachPlugin(),
+            JiraPublishPlugin(),
             GitBranchPlugin(),
             GitCommitPlugin(),
             GitPrPlugin(),
