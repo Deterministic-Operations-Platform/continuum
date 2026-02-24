@@ -10,9 +10,13 @@ import os
 from pathlib import Path
 import re
 import signal
+import socket
 from threading import Lock
 from time import sleep
 from typing import Any, Protocol
+import urllib.error
+from urllib.parse import urlparse
+import urllib.request
 import uuid
 
 from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError, StepExecutionError
@@ -251,6 +255,7 @@ class DeterministicRuntime:
         audit: _AuditLog | None = None
         deferred_error: ContinuumError | None = None
         safe_summary: dict[str, Any] | None = None
+        dependency_preflight: dict[str, Any] = {"checks": [], "status": "not_configured"}
 
         warnings = [
             f"step '{step.name}' uses legacy with.retries/backoffMs shorthand; normalized into step.retry"
@@ -306,6 +311,8 @@ class DeterministicRuntime:
             )
             if governance:
                 audit.append("governance.checked", governance)
+
+            dependency_preflight = self._run_dependency_preflight(scenario=scenario, context=context, run_dir=run_dir, audit=audit)
 
             service_states = self._ensure_services(scenario=scenario, context=context, run_dir=run_dir, no_services=no_services, reuse_sessions=reuse_sessions, audit=audit)
             dep_map = self._dependency_index_map(scenario.steps)
@@ -363,6 +370,7 @@ class DeterministicRuntime:
                 "service_cleanup": service_cleanup,
                 "governance": governance,
                 "policy": policy_results,
+                "dependency_preflight": dependency_preflight,
                 "selection": {str(k): v for k, v in sorted(selection.items())},
                 "failure": failure,
                 "warnings": warnings,
@@ -385,6 +393,7 @@ class DeterministicRuntime:
                 "audit": audit.state() if audit else {},
                 "governance": redactor.redact(governance),
                 "policy": redactor.redact(policy_results),
+                "dependency_preflight": redactor.redact(dependency_preflight),
                 "status": status,
             }
             self._write_bundle_safely(
@@ -916,6 +925,113 @@ class DeterministicRuntime:
         payload = {"index": index, "name": step.name, "key": _step_key(step, index), "type": step.type, "phase": phase, "status": "skipped", "ok": True, "skipReason": reason, "attempts": [], "publish": {}, "exports": {}, "traceId": str(context.get("vars", {}).get("traceId") or "")}
         context["write_json"](context["step_dir"](index, step.name), "skipped.json", payload)
         return payload
+
+    def _run_dependency_preflight(self, *, scenario: Scenario, context: dict[str, Any], run_dir: Path, audit: _AuditLog | None) -> dict[str, Any]:
+        checks: list[dict[str, Any]] = []
+        status = "not_configured"
+        for name, cfg in (scenario.dependencies or {}).items():
+            if str(name).strip().lower() != "gateway":
+                continue
+            status = "healthy"
+            check = self._gateway_dependency_check(name=name, cfg=cfg, context=context)
+            checks.append(check)
+            if check.get("mode") in {"stub", "replay"}:
+                status = "degraded"
+            elif not check.get("ok", False):
+                status = "failed"
+
+        payload = {"status": status, "checks": checks}
+        self.evidence_collector.write_json(run_dir / "gateway_check.json", payload)
+        if audit:
+            audit.append("dependency.preflight", payload)
+
+        failed = [item for item in checks if not bool(item.get("ok", False)) and str(item.get("mode") or "") == "live"]
+        if failed:
+            first = failed[0]
+            raise StepExecutionError(
+                f"DEPENDENCY_DOWN: gateway endpoint={first.get('endpoint')} timestamp={first.get('timestamp')} response={first.get('response')} dns={first.get('dns')}"
+            )
+        return payload
+
+    def _gateway_dependency_check(self, *, name: str, cfg: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        endpoint = str(cfg.get("endpoint") or cfg.get("health") or "").strip()
+        timeout_sec = max(1, int(cfg.get("timeoutSec", 5)))
+        retries = max(1, int(cfg.get("retries", 2)))
+        required = bool(cfg.get("required", True))
+        fallback = str(cfg.get("fallback") or "").strip().lower() or None
+        allowed_modes = cfg.get("allowed_modes") if isinstance(cfg.get("allowed_modes"), list) else ["live", "stub", "replay"]
+        now = datetime.now(timezone.utc).isoformat()
+
+        if not endpoint:
+            return {
+                "name": name,
+                "ok": False,
+                "mode": "live",
+                "required": required,
+                "endpoint": endpoint,
+                "timestamp": now,
+                "response": {"classification": "config", "error": "missing endpoint"},
+                "dns": {"ok": False, "classification": "dns", "error": "missing host"},
+                "suggested_action": "set dependencies.gateway.endpoint",
+            }
+
+        parsed = urlparse(endpoint)
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            addresses = sorted({entry[4][0] for entry in socket.getaddrinfo(host, port)})
+            dns = {"ok": True, "host": host, "addresses": addresses}
+        except Exception as err:
+            dns = {"ok": False, "host": host, "classification": "dns", "error": str(err)}
+
+        response: dict[str, Any] = {"classification": "unreachable"}
+        ok = False
+        for attempt in range(1, retries + 1):
+            try:
+                request = urllib.request.Request(url=endpoint, method="GET")
+                with urllib.request.urlopen(request, timeout=timeout_sec) as resp:
+                    code = int(resp.status)
+                    response = {"attempt": attempt, "status": code, "classification": "ok" if 200 <= code < 300 else "http_5xx"}
+                    if 200 <= code < 300:
+                        ok = True
+                        break
+            except urllib.error.HTTPError as err:
+                code = int(err.code)
+                response = {
+                    "attempt": attempt,
+                    "status": code,
+                    "classification": "auth" if code in {401, 403} else "http_5xx" if code >= 500 else "http_error",
+                    "error": str(err),
+                }
+            except TimeoutError as err:
+                response = {"attempt": attempt, "classification": "timeout", "error": str(err)}
+            except Exception as err:
+                response = {"attempt": attempt, "classification": "network", "error": str(err)}
+
+        mode = "live"
+        suggested_action = "none"
+        if not ok and (not required) and fallback in {"stub", "replay"} and fallback in allowed_modes:
+            mode = fallback
+            suggested_action = f"switch to {fallback} mode"
+            dep_vars = context.get("vars") if isinstance(context.get("vars"), dict) else {}
+            if isinstance(dep_vars, dict):
+                dependencies = dep_vars.setdefault("dependencies", {})
+                if isinstance(dependencies, dict):
+                    dependencies[name] = {"mode": mode, "endpoint": endpoint}
+
+        return {
+            "name": name,
+            "ok": ok or mode != "live",
+            "mode": mode,
+            "required": required,
+            "fallback": fallback,
+            "allowed_modes": allowed_modes,
+            "endpoint": endpoint,
+            "timestamp": now,
+            "response": response,
+            "dns": dns,
+            "suggested_action": suggested_action,
+        }
 
     def _ensure_services(self, *, scenario: Scenario, context: dict[str, Any], run_dir: Path, no_services: bool, reuse_sessions: bool, audit: _AuditLog | None) -> dict[str, dict[str, Any]]:
         service_states: dict[str, dict[str, Any]] = {}

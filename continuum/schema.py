@@ -19,6 +19,7 @@ def validate_scenario_schema(document: dict[str, Any]) -> list[str]:
     _expect_type(errors, document, "services", dict, optional=True)
     _expect_type(errors, document, "governance", dict, optional=True)
     _expect_type(errors, document, "policy", dict, optional=True)
+    _expect_type(errors, document, "dependencies", dict, optional=True)
     _expect_type(errors, document, "cleanup_steps", list, optional=True)
 
     steps = document.get("steps")
@@ -51,6 +52,24 @@ def validate_scenario_schema(document: dict[str, Any]) -> list[str]:
             signature = requires.get("signature")
             if signature is not None and not isinstance(signature, bool):
                 errors.append("field 'policy.requires.signature' must be of type bool")
+
+    dependencies = document.get("dependencies")
+    if isinstance(dependencies, dict):
+        for key, dep in dependencies.items():
+            prefix = f"dependencies.{key}"
+            if not isinstance(dep, dict):
+                errors.append(f"field '{prefix}' must be of type object")
+                continue
+            if "required" in dep and not isinstance(dep.get("required"), bool):
+                errors.append(f"field '{prefix}.required' must be of type bool")
+            if "fallback" in dep and dep.get("fallback") not in {"stub", "replay"}:
+                errors.append(f"field '{prefix}.fallback' must be one of: stub, replay")
+            if "allowed_modes" in dep:
+                allowed = dep.get("allowed_modes")
+                if not isinstance(allowed, list):
+                    errors.append(f"field '{prefix}.allowed_modes' must be of type array")
+                elif not all(isinstance(mode, str) and mode in {"live", "stub", "replay"} for mode in allowed):
+                    errors.append(f"field '{prefix}.allowed_modes' must contain only live|stub|replay")
 
     return sorted(set(errors))
 
@@ -88,4 +107,3 @@ def _validate_step(step: Any, *, index: int, label: str) -> list[str]:
     if "retry" in step and not isinstance(step.get("retry"), dict):
         errors.append(f"{prefix}.retry must be an object")
     return errors
-
