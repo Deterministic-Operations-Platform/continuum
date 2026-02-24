@@ -13,11 +13,11 @@ except ModuleNotFoundError:
     rich_print = print
 
 from continuum import __version__, ContinuumError, DeterministicRuntime, EvidenceCollector, PluginRegistry, load_scenario
+from continuum.keys import write_keypair_ed25519
 from continuum.publish import publish_run
 from continuum.runtime import build_plan, validate_scenario
 from continuum.scenario import load_scenario_document
 from continuum.schema import validate_scenario_schema
-from continuum.signing import generate_ed25519_keypair
 from continuum.verify import cmd_verify
 
 
@@ -101,8 +101,7 @@ def main() -> None:
     verify.add_argument("--runs-dir", dest="runs_dir", default="runs", help="Directory containing run bundles")
 
     keygen = sub.add_parser("keygen", help="Generate an Ed25519 signing keypair")
-    keygen.add_argument("--out-dir", dest="out_dir", default=".continuum/keys", help="Output directory for generated keys")
-    keygen.add_argument("--name", dest="name", default="continuum-ed25519", help="Base file name for generated key pair")
+    keygen.add_argument("--out-dir", dest="out_dir", default="keys", help="Output directory for generated keys")
 
     ci = sub.add_parser("ci", help="Validate + run + publish in CI mode")
     ci.add_argument("scenario", help="Path to scenario YAML/JSON")
@@ -263,9 +262,9 @@ def main() -> None:
             raise SystemExit(2) from err
 
     if args.cmd == "keygen":
-        metadata = generate_ed25519_keypair(output_dir=Path(args.out_dir), key_name=args.name)
+        private_path, public_path = write_keypair_ed25519(Path(args.out_dir))
         rich_print("[green]Generated Ed25519 keypair[/green]")
-        rich_print(json.dumps(metadata, indent=2, sort_keys=True))
+        rich_print(json.dumps({"privateKeyPath": str(private_path), "publicKeyPath": str(public_path)}, indent=2, sort_keys=True))
         return
 
     if args.cmd == "ci":

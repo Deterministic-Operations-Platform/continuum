@@ -1689,6 +1689,38 @@ class LogsCollectPlugin:
         return StepResult(ok=True, details=details, evidence_paths=evidence_paths, exports=exports)
 
 
+class EvidenceUploadPlugin:
+    type = "evidence.upload"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        from continuum.signing import sha256_file
+
+        run_dir = Path(str(ctx.get("run_dir") or ""))
+        vault_root = Path(str(step_with.get("vaultDir") or (os.environ.get("CONTINUUM_VAULT_DIR") or "vault")))
+
+        manifest = run_dir / "manifest.json"
+        if not manifest.is_file():
+            return StepResult(ok=False, details={"error": "manifest.json missing"}, evidence_paths=[], exports={})
+
+        manifest_sha = sha256_file(manifest)
+        target = vault_root / manifest_sha
+
+        allow_overwrite = bool(step_with.get("allowOverwrite", False))
+        if target.exists() and not allow_overwrite:
+            payload = {"ok": True, "skipped": True, "reason": "already exists", "vaultPath": str(target), "manifestSha256": manifest_sha, "vaultUri": f"file://{target}"}
+            path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "evidence_vault.json", payload)
+            return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"vaultUri": f"file://{target}", "vaultSkipped": True})
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() and allow_overwrite:
+            shutil.rmtree(target, ignore_errors=True)
+
+        shutil.copytree(run_dir, target)
+        payload = {"ok": True, "skipped": False, "vaultPath": str(target), "vaultUri": f"file://{target}", "manifestSha256": manifest_sha}
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "evidence_vault.json", payload)
+        return StepResult(ok=True, details=payload, evidence_paths=[path], exports={"vaultUri": payload["vaultUri"], "vaultSkipped": False})
+
+
 class LegacyPlugin:
     def __init__(self, type_name: str): self.type = type_name
 
@@ -1715,6 +1747,7 @@ class PluginRegistry:
             JiraCommentPlugin(),
             JiraAttachPlugin(),
             JiraPublishPlugin(),
+            EvidenceUploadPlugin(),
             GitBranchPlugin(),
             GitCommitPlugin(),
             GitPrPlugin(),

@@ -16,3 +16,6 @@ __pycache__/
 .vscode/
 site/
 tests_tmp/
+
+continuum_private.key
+keys/continuum_private.key

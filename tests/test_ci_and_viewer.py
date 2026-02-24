@@ -30,6 +30,10 @@ class CiAndViewerTests(unittest.TestCase):
                     report_path="runs/r-1/report.html",
                     signed=True,
                     policy_ok=True,
+                    signature_key_id="",
+                    manifest_sha256="",
+                    signature_verified=True,
+                    signature_verify_msg="ok",
                 )
             ],
         )
@@ -38,8 +42,10 @@ class CiAndViewerTests(unittest.TestCase):
         self.assertIn("Compare Data", html)
         self.assertIn("Policy", html)
         self.assertIn("Signed", html)
+        self.assertIn("Verified", html)
         self.assertIn("trace-1", html)
         self.assertIn("Signed?", html)
+        self.assertIn("Verified?", html)
         self.assertIn("Policy OK?", html)
 
 
