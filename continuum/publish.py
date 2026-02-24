@@ -177,6 +177,10 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
                 "policy ok" if item.policy_ok else "policy fail",
             ]
         ).lower()
+        policy_label = "PASS" if item.policy_ok else "FAIL"
+        policy_tone = "success" if item.policy_ok else "danger"
+        signed_label = "YES" if item.signed else "NO"
+        signed_tone = "success" if item.signed else "muted"
         rows.append(
             f"<tr data-row='run' data-status='{escape(status_tone)}' data-status-value='{escape(item.status.lower())}' "
             f"data-run-id='{escape(item.run_id)}' data-status-label='{escape(item.status)}' "
@@ -680,7 +684,7 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
           <thead><tr><th>Select</th><th>Run ID</th><th>Status</th><th>Trace ID</th><th>Git HEAD</th><th>Signed?</th><th>Policy OK?</th><th>Started</th><th>Ended</th><th>Compare Data</th></tr></thead>
           <tbody>
             __ROWS__
-            <tr id='emptyRow' hidden><td colspan='8'>No runs match the current filter.</td></tr>
+            <tr id='emptyRow' hidden><td colspan='10'>No runs match the current filter.</td></tr>
           </tbody>
         </table>
       </div>
@@ -741,7 +745,11 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
         signed: row.dataset.signed || "false",
         policyOk: row.dataset.policyOk || "false",
         started: row.dataset.started || "",
-        ended: row.dataset.ended || ""
+        ended: row.dataset.ended || "",
+        policyOk: row.dataset.policyOk === "true",
+        signed: row.dataset.signed === "true",
+        keyId: row.dataset.keyId || "",
+        manifestSha: row.dataset.manifestSha || ""
       };
     }
 

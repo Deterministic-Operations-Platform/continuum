@@ -200,11 +200,12 @@ def _jira_request_attachment(
     base_url: str,
     issue_key: str,
     file_path: str,
+    api_version: int = 2,
     email: str,
     token: str,
     timeout_sec: int,
 ) -> tuple[int, Any]:
-    path = f"/rest/api/2/issue/{quote(issue_key)}/attachments"
+    path = f"/rest/api/{int(api_version)}/issue/{quote(issue_key)}/attachments"
     url = f"{base_url}{path}"
     file_obj = Path(file_path)
     payload = file_obj.read_bytes()
@@ -1254,6 +1255,7 @@ class JiraAttachPlugin:
                     base_url=jira_cfg["baseUrl"],
                     issue_key=issue_key,
                     file_path=file_path,
+                    api_version=2,
                     email=jira_cfg["email"],
                     token=jira_cfg["token"],
                     timeout_sec=int(jira_cfg["timeoutSec"]),

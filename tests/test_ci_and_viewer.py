@@ -36,6 +36,8 @@ class CiAndViewerTests(unittest.TestCase):
         html = (site_dir / "index.html").read_text(encoding="utf-8")
         self.assertIn("Evidence Viewer", html)
         self.assertIn("Compare Data", html)
+        self.assertIn("Policy", html)
+        self.assertIn("Signed", html)
         self.assertIn("trace-1", html)
         self.assertIn("Signed?", html)
         self.assertIn("Policy OK?", html)

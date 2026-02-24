@@ -37,19 +37,17 @@ steps:
           op: gte
           value: 1
 
-  - name: jira-comment
-    type: jira.comment
+  - name: publish_to_jira
+    type: jira.publish
     with:
-      issueKey: ${issueKey}
-      body: "Run ${runId} completed with AppLauncher PID ${appPid}."
-
-  - name: jira-attach-evidence
-    type: jira.attach
-    with:
-      issueKey: ${issueKey}
-      files:
-        - ${runDir}/evidence/**/newman-report.html
-        - ${runDir}/summary.json
+      issueKey: ${env.JIRA_ISSUE_KEY}
+      attach:
+        - report.html
+        - summary.json
+        - manifest.json
+        - bundle_signature.json
+      apiVersion: 2
+      softFail: false
 
   - name: publish_to_jira
     type: jira.publish
