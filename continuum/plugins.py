@@ -200,11 +200,12 @@ def _jira_request_attachment(
     base_url: str,
     issue_key: str,
     file_path: str,
+    api_version: int = 2,
     email: str,
     token: str,
     timeout_sec: int,
 ) -> tuple[int, Any]:
-    path = f"/rest/api/2/issue/{quote(issue_key)}/attachments"
+    path = f"/rest/api/{int(api_version)}/issue/{quote(issue_key)}/attachments"
     url = f"{base_url}{path}"
     file_obj = Path(file_path)
     payload = file_obj.read_bytes()
@@ -1254,6 +1255,7 @@ class JiraAttachPlugin:
                     base_url=jira_cfg["baseUrl"],
                     issue_key=issue_key,
                     file_path=file_path,
+                    api_version=2,
                     email=jira_cfg["email"],
                     token=jira_cfg["token"],
                     timeout_sec=int(jira_cfg["timeoutSec"]),
@@ -1269,6 +1271,88 @@ class JiraAttachPlugin:
             ok = bool(files)
         path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "resolved_files.json", details)
         return StepResult(ok=ok, details=details, evidence_paths=[path])
+
+
+class JiraPublishPlugin:
+    """Publish an audit-ready Jira update (comment + evidence attachments)."""
+
+    type = "jira.publish"
+
+    def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
+        run_id = str(ctx.get("run_id") or "")
+        issue_key = str(step_with.get("issueKey") or ctx.get("vars", {}).get("issueKey") or ctx.get("env", {}).get("JIRA_ISSUE_KEY") or "").strip()
+        api_version = int(step_with.get("apiVersion", 2))
+        soft_fail = bool(step_with.get("softFail", True))
+        attach_config = dict(step_with)
+        if "attach" in attach_config and "files" not in attach_config:
+            attach_config["files"] = attach_config.get("attach")
+        requested_files = resolve_attach_files(attach_config, ctx["run_dir"])
+        site_url = str(ctx.get("env", {}).get("CONTINUUM_SITE_URL") or "").strip().rstrip("/")
+        report_link = f"{site_url}/runs/{run_id}/report.html" if site_url and run_id else ""
+
+        body = str(step_with.get("body") or "").strip() or f"Continuum run {run_id or 'unknown'} completed."
+        if report_link:
+            body = f"{body}\n\nReport: {report_link}"
+
+        jira_cfg, missing = _jira_config(step_with, ctx)
+        if not issue_key:
+            missing.append("JIRA_ISSUE_KEY or with.issueKey")
+        if not _connector_live_gate_enabled(ctx=ctx, connector="jira"):
+            missing.append("CONTINUUM_ENABLE_LIVE_CONNECTORS or CONTINUUM_ENABLE_LIVE_JIRA")
+        missing = sorted(set(missing))
+        live = not missing
+
+        details: dict[str, Any] = {
+            "runId": run_id,
+            "issueKey": issue_key,
+            "apiVersion": api_version,
+            "softFail": soft_fail,
+            "live": live,
+            "dryRun": not live,
+            "missing": missing,
+            "comment": body,
+            "attachments": requested_files,
+        }
+
+        if live:
+            try:
+                status_code, payload = _jira_request_json(
+                    method="POST",
+                    base_url=jira_cfg["baseUrl"],
+                    path=f"/rest/api/{api_version}/issue/{quote(issue_key)}/comment",
+                    email=jira_cfg["email"],
+                    token=jira_cfg["token"],
+                    timeout_sec=int(jira_cfg["timeoutSec"]),
+                    payload={"body": body},
+                )
+                uploads: list[dict[str, Any]] = []
+                for file_path in requested_files:
+                    upload_status, upload_payload = _jira_request_attachment(
+                        base_url=jira_cfg["baseUrl"],
+                        issue_key=issue_key,
+                        file_path=file_path,
+                        api_version=api_version,
+                        email=jira_cfg["email"],
+                        token=jira_cfg["token"],
+                        timeout_sec=int(jira_cfg["timeoutSec"]),
+                    )
+                    attachment_payload = upload_payload if isinstance(upload_payload, list) else [upload_payload]
+                    attachment_id = None
+                    if attachment_payload and isinstance(attachment_payload[0], dict):
+                        attachment_id = attachment_payload[0].get("id")
+                    uploads.append({"path": file_path, "statusCode": upload_status, "attachmentId": attachment_id})
+                details.update({
+                    "statusCode": status_code,
+                    "commentId": payload.get("id") if isinstance(payload, dict) else None,
+                    "uploaded": uploads,
+                })
+            except StepExecutionError as err:
+                if not soft_fail:
+                    raise
+                details.update({"ok": False, "error": str(err)})
+
+        path = ctx["write_json"](ctx["step_dir"](step_index, step_name), "publish.json", details)
+        return StepResult(ok=True, details=details, evidence_paths=[path])
 
 
 class GitBranchPlugin:
@@ -1614,6 +1698,7 @@ class PluginRegistry:
             JiraFetchPlugin(),
             JiraCommentPlugin(),
             JiraAttachPlugin(),
+            JiraPublishPlugin(),
             GitBranchPlugin(),
             GitCommitPlugin(),
             GitPrPlugin(),

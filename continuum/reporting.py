@@ -92,9 +92,16 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
 
     signature_manifest_hash = ""
     signature_hex = ""
+    signature_key_id = ""
     if isinstance(signature, dict):
         signature_manifest_hash = str(signature.get("manifest_sha256") or "")
         signature_hex = str(signature.get("signature") or "")
+        signature_key_id = str(signature.get("keyId") or "")
+
+    policy_ok = bool(policy.get("ok", False))
+    policy_missing = policy.get("missing") if isinstance(policy.get("missing"), list) else []
+    policy_gate_label = "PASS" if policy_ok else "FAIL"
+    policy_missing_text = ", ".join(str(item) for item in policy_missing) if policy_missing else "none"
 
     status_tone = _status_tone(status)
 
@@ -438,6 +445,22 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     </section>
 
     <section>
+      <h2>Integrity</h2>
+      <div class='split'>
+        <div class='mini-panel'>
+          <div class='title'>Policy Gate</div>
+          <div><strong class='tone-__POLICY_GATE_TONE__'>__POLICY_GATE_LABEL__</strong></div>
+          <div style='margin-top: 6px;'><strong>Missing:</strong> __POLICY_MISSING__</div>
+        </div>
+        <div class='mini-panel'>
+          <div class='title'>Bundle Signature</div>
+          <div><strong>keyId:</strong> <code class='inline-block'>__SIGNATURE_KEY_ID__</code></div>
+          <div style='margin-top: 6px;'><strong>manifest sha:</strong> <code class='inline-block'>__SIGNATURE_MANIFEST_SHA__</code></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
       <h2>Execution Timeline</h2>
       <ul class='timeline'>__TIMELINE_ITEMS__</ul>
     </section>
@@ -503,6 +526,11 @@ def render_report_html(*, summary: dict[str, Any], manifest: dict[str, Any], sig
     html = html.replace("__STEP_SUCCEEDED__", str(succeeded_steps))
     html = html.replace("__STEP_FAILED__", str(failed_steps))
     html = html.replace("__STEP_SKIPPED__", str(skipped_steps))
+    html = html.replace("__POLICY_GATE_LABEL__", policy_gate_label)
+    html = html.replace("__POLICY_GATE_TONE__", "success" if policy_ok else "danger")
+    html = html.replace("__POLICY_MISSING__", escape(policy_missing_text))
+    html = html.replace("__SIGNATURE_KEY_ID__", escape(signature_key_id or "not present"))
+    html = html.replace("__SIGNATURE_MANIFEST_SHA__", escape(signature_manifest_hash or "not present"))
     html = html.replace("__TIMELINE_ITEMS__", "\n            ".join(timeline_items) or "<li class='timeline-item'><span class='timeline-dot timeline-muted'></span><div><div class='timeline-title'>No steps recorded</div><div class='timeline-meta'>Run summary did not include step telemetry.</div></div></li>")
     html = html.replace("__STEP_ROWS__", "\n            ".join(step_rows) or "<tr><td colspan='6'>No steps recorded.</td></tr>")
     html = html.replace("__POLICY_NOTES__", policy_notes)
