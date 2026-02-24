@@ -1,0 +1,49 @@
+name: continuum-provable-runs
+version: v0.2
+required_evidence:
+  - id: trace-file
+    description: Correlation trace artifact
+    match: all
+    patterns:
+      - trace.json
+
+  - id: summary-file
+    description: Run execution summary
+    match: all
+    patterns:
+      - summary.json
+
+  - id: manifest-file
+    description: Artifact manifest
+    match: all
+    patterns:
+      - manifest.json
+
+  - id: bundle-signature
+    description: Tamper-evident bundle signature
+    match: all
+    patterns:
+      - bundle_signature.json
+
+  - id: report-html
+    description: Shareable HTML report
+    match: all
+    patterns:
+      - report.html
+
+  - id: postman-report
+    description: Newman execution evidence
+    match: any
+    when_step_types:
+      - postman.run
+    patterns:
+      - evidence/**/newman-report.html
+      - evidence/**/newman-summary.json
+
+  - id: mongo-assertions
+    description: Mongo verification assertions
+    match: all
+    when_step_types:
+      - mongo.verify
+    patterns:
+      - evidence/**/assertions.json

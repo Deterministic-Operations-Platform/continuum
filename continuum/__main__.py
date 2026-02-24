@@ -63,6 +63,7 @@ def main() -> None:
     run.add_argument("--actor", dest="actor", default=None, help="Actor identity for RBAC checks")
     run.add_argument("--role", dest="roles", action="append", default=[], help="Actor role (can be repeated)")
     run.add_argument("--approval-file", dest="approval_file", default=None, help="Path to approval file for governance checks")
+    run.add_argument("--policy-file", dest="policy_file", default=None, help="Path to policy.yaml for evidence gate checks")
 
     golden = sub.add_parser("golden-run", help="Run the FedNow/RTPay golden scenario and publish report")
     golden.add_argument("--scenario", dest="scenario", default="scenarios/fednow/rtpay-golden.yaml", help="Golden scenario path")
@@ -71,6 +72,7 @@ def main() -> None:
     golden.add_argument("--actor", dest="actor", default=None, help="Actor identity for RBAC checks")
     golden.add_argument("--role", dest="roles", action="append", default=["release-manager"], help="Actor role (can be repeated)")
     golden.add_argument("--approval-file", dest="approval_file", default=None, help="Path to approval file for governance checks")
+    golden.add_argument("--policy-file", dest="policy_file", default=None, help="Path to policy.yaml for evidence gate checks")
     golden.add_argument("--no-publish", dest="no_publish", action="store_true", help="Run scenario without publishing static report")
     golden.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
 
@@ -127,6 +129,7 @@ def main() -> None:
                 actor=args.actor,
                 actor_roles=tuple(args.roles),
                 approval_file=args.approval_file,
+                cli_vars={"policyFile": args.policy_file} if args.policy_file else None,
             )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             rich_print(
@@ -157,6 +160,7 @@ def main() -> None:
                 actor=args.actor,
                 actor_roles=tuple(args.roles),
                 approval_file=args.approval_file,
+                cli_vars={"policyFile": args.policy_file} if args.policy_file else None,
             )
             status_style = "bold green" if summary["status"] == "succeeded" else "bold red"
             rich_print(

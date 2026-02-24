@@ -14,36 +14,41 @@ steps:
     with:
       commands: ["python"]
 
-  - name: Jira ticket ingestion
-    key: jira_ingest
-    type: jira.fetch
+  - name: Ensure AppLauncher session
+    key: ensure_applauncher
+    type: applauncher.ensure
     with:
-      issue:
-        labels: ["postman", "sql", "logs"]
-        components: ["payments"]
+      session: fednow-rtpay-golden
+      command: python
+      args: ["-m", "http.server", "8087"]
+      cwd: .
+      healthUrl: http://127.0.0.1:8087
+      verifyTimeoutSec: 20
 
-  - name: Run regression plan
+  - name: Run payments collection
     key: run_postman
     type: postman.run
     with:
       collection: examples/postman/fednow-rtpay-regression.postman_collection.json
       reporters: cli,json
+      envVar:
+        baseUrl: http://127.0.0.1:8087
       allowMissingDependency: true
 
-  - name: Verify DB persistence
-    key: verify_sql
-    type: sql.verify
+  - name: Verify Mongo assertions
+    key: verify_mongo
+    type: mongo.verify
     with:
-      database: ${runDir}/rtpay-demo.sqlite
-      seedStatements:
-        - create table if not exists ledger(id integer primary key, trace_id text, status text)
-        - "insert into ledger(trace_id, status) values ('${traceId}', 'SETTLED')"
+      uri: ${env.MONGO_URI}
+      db: rtpay
+      autoFilterTraceId: true
       queries:
-        - name: persisted
-          sql: select * from ledger where trace_id = ? and status = ?
-          params: ["${traceId}", "SETTLED"]
+        - name: ledgerRows
+          collection: paymentLedger
+          filter:
+            runId: ${runId}
       assert:
-        - query: persisted
+        - query: ledgerRows
           op: gte
           value: 1
 
@@ -52,7 +57,7 @@ steps:
     type: logs.collect
     with:
       sources:
-        - name: run-evidence
+        - name: run-evidence-json
           type: dir_glob
           glob: ${runDir}/evidence/**/*.json
       match:
@@ -63,12 +68,26 @@ steps:
     key: jira_comment
     type: jira.comment
     with:
-      body: "Continuum golden run ${runId} completed. Trace ${traceId}."
+      body: "Continuum payments golden run ${runId} completed. Trace ${traceId}. Report + signed evidence attached."
 
   - name: Attach evidence bundle
     key: jira_attach
     type: jira.attach
     with:
       globs:
-        - evidence/**/*.json
-      maxFiles: 25
+        - evidence/**/newman-summary.json
+        - evidence/**/assertions.json
+        - evidence/**/snippets.json
+        - trace.json
+        - summary.json
+        - manifest.json
+        - bundle_signature.json
+        - report.html
+      maxFiles: 40
+
+cleanup_steps:
+  - name: Stop AppLauncher session
+    key: stop_applauncher
+    type: applauncher.session.stop
+    with:
+      session: fednow-rtpay-golden

@@ -25,6 +25,13 @@ from continuum.plugins import (
     render_templates,
     resolve_attach_files,
 )
+from continuum.policy import (
+    DEFAULT_POLICY_PATH,
+    PolicyValidationError,
+    evaluate_policy_post,
+    evaluate_policy_pre,
+    load_policy,
+)
 from continuum.scenario import Scenario, ScenarioStep
 
 
@@ -228,6 +235,10 @@ class DeterministicRuntime:
         service_states: dict[str, dict[str, Any]] = {}
         service_cleanup: dict[str, Any] = {}
         governance: dict[str, Any] = {}
+        policy_results: dict[str, Any] = {"pre": {}, "post": {}}
+        policy_config = None
+        policy_path = Path(DEFAULT_POLICY_PATH)
+        policy_load_error: str | None = None
         selection: dict[int, str] = {}
         failure: dict[str, Any] | None = None
         trace_id = ""
@@ -264,6 +275,21 @@ class DeterministicRuntime:
             }
             self.evidence_collector.write_json(run_dir / "trace.json", redactor.redact({"runId": resolved_run_id, "traceId": trace_id}))
             audit.append("run.started", {"scenario": scenario.name, "resumedFrom": effective_resume_id, "maxParallel": max(1, int(max_parallel))})
+
+            policy_override = vars_payload.get("policyFile")
+            if isinstance(policy_override, str) and policy_override.strip():
+                policy_path = Path(policy_override.strip())
+            try:
+                policy_config = load_policy(policy_path)
+            except PolicyValidationError as err:
+                policy_load_error = str(err)
+            policy_pre = evaluate_policy_pre(policy=policy_config, scenario=scenario, policy_path=policy_path, load_error=policy_load_error)
+            policy_results["pre"] = redactor.redact(policy_pre)
+            audit.append("policy.pre", policy_results["pre"])
+            if not bool(policy_pre.get("ok", False)):
+                violations = policy_pre.get("violations") or []
+                reason = "; ".join(str(item) for item in violations) if violations else "policy pre-check failed"
+                raise StepExecutionError(f"Policy gate (before execution) failed: {reason}")
 
             governance = self._enforce_governance(
                 scenario=scenario,
@@ -333,6 +359,7 @@ class DeterministicRuntime:
                 "services": service_states,
                 "service_cleanup": service_cleanup,
                 "governance": governance,
+                "policy": policy_results,
                 "selection": {str(k): v for k, v in sorted(selection.items())},
                 "failure": failure,
                 "warnings": warnings,
@@ -350,13 +377,48 @@ class DeterministicRuntime:
                 "roles": sorted({str(v).strip() for v in actor_roles if str(v).strip()}),
                 "traceId": trace_id,
             }
+            manifest_payload = {
+                "traceId": trace_id,
+                "audit": audit.state() if audit else {},
+                "governance": redactor.redact(governance),
+                "policy": redactor.redact(policy_results),
+                "status": status,
+            }
             self._write_bundle_safely(
                 run_id=resolved_run_id,
                 scenario_source=scenario_source,
                 scenario_text=scenario_text,
                 context_payload=context_payload,
                 summary=safe_summary,
-                manifest_payload={"traceId": trace_id, "audit": audit.state() if audit else {}, "governance": redactor.redact(governance), "status": status},
+                manifest_payload=manifest_payload,
+            )
+
+            policy_post = evaluate_policy_post(policy=policy_config, scenario=scenario, run_dir=run_dir)
+            policy_results["post"] = redactor.redact(policy_post)
+            if audit:
+                audit.append("policy.post", policy_results["post"])
+            if not bool(policy_post.get("ok", False)):
+                violations = policy_post.get("violations") or []
+                reason = "; ".join(str(item) for item in violations) if violations else "required evidence missing"
+                failure = {
+                    "message": f"Policy gate (after execution) failed: {reason}",
+                    "class": FailureClass.LOGIC.value,
+                }
+                status = "failed"
+
+            summary["status"] = status
+            summary["failure"] = failure
+            summary["policy"] = policy_results
+            safe_summary = redactor.redact(summary)
+            manifest_payload["status"] = status
+            manifest_payload["policy"] = redactor.redact(policy_results)
+            self._write_bundle_safely(
+                run_id=resolved_run_id,
+                scenario_source=scenario_source,
+                scenario_text=scenario_text,
+                context_payload=context_payload,
+                summary=safe_summary,
+                manifest_payload=manifest_payload,
             )
         if safe_summary is None:
             raise StepExecutionError("run summary was not generated")

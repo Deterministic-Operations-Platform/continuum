@@ -2,7 +2,7 @@
 
 Continuum is a deterministic, plugin-based Python orchestration engine for high-stakes workflow scenarios (for example FedNow), with audit-ready evidence produced on every run, including failures.
 
-“Continuum turns high-stakes engineering work into deterministic, replayable runs with audit-ready evidence—so banks can ship faster without increasing risk.”
+"Continuum turns high-stakes engineering work into deterministic, replayable runs with audit-ready evidence so banks can ship faster without increasing risk."
 
 For v0.1, Python is the executable engine and source of truth. TS/Java implementations are parked under `experimental/` until they match the same runtime contract.
 
@@ -21,10 +21,10 @@ continuum status
 
 `continuum run <scenario> [--run-id ...]`
 - Execute a scenario deterministically and emit a run bundle under `runs/<run-id>/`.
-- Supports resume/selective execution, `--max-parallel`, RBAC actor/roles, and approval-file governance checks.
+- Supports resume/selective execution, `--max-parallel`, RBAC actor/roles, approval-file governance checks, and policy-gated evidence checks (`policy.yaml` or `--policy-file`).
 
 `continuum golden-run [--scenario scenarios/fednow/rtpay-golden.yaml]`
-- One command for the FedNow/RTPay golden path: preflight, regression run, DB verification, log correlation, and publish-ready evidence.
+- One command for the FedNow/RTPay golden path: preflight, AppLauncher ensure, Postman run, Mongo verify, log correlation, Jira comment/attach, and publish-ready evidence.
 
 `continuum validate <scenario>`
 - Validate scenario contract, plugin availability, and template references without executing.
@@ -42,6 +42,7 @@ name: string
 rail: string
 vars: {}               # optional
 services: {}           # optional
+governance: {}         # optional
 steps:                 # required, non-empty
   - name: string
     type: string
@@ -72,6 +73,8 @@ Every run writes:
 - `runs/<run-id>/context.json`
 - `runs/<run-id>/summary.json`
 - `runs/<run-id>/manifest.json`
+- `runs/<run-id>/bundle_signature.json`
+- `runs/<run-id>/report.html`
 
 `events.log` may also be present depending on plugin/runtime behavior.
 - `events.log` is append-only with hash chaining (`prevHash` -> `hash`) for tamper-evident audit history.

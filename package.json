@@ -1,0 +1,29 @@
+{
+  "name": "continuum",
+  "version": "1.0.0",
+  "description": "Continuum is a deterministic, plugin-based Python orchestration engine for high-stakes workflow scenarios (for example FedNow), with audit-ready evidence produced on every run, including failures.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nnabdelshahid/continuum.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/nnabdelshahid/continuum/issues"
+  },
+  "homepage": "https://github.com/nnabdelshahid/continuum#readme",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

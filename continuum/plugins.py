@@ -48,6 +48,32 @@ TEMPLATE_PATTERN = re.compile(r"\$\{([^}]+)\}")
 _BACKGROUND_PROCS: dict[int, subprocess.Popen[Any]] = {}
 
 
+def _resolve_newman_executable() -> str | None:
+    candidates = ["newman"]
+    local_candidates: list[Path]
+    if os.name == "nt":
+        # On Windows, subprocess([...], shell=False) cannot reliably execute
+        # extensionless command names from PATH; prefer explicit script/binary.
+        candidates = ["newman.cmd", "newman.exe", "newman.bat", "newman"]
+        local_candidates = [
+            Path.cwd() / ".continuum" / "vendor" / "npm" / "node_modules" / ".bin" / "newman.cmd",
+            Path.cwd() / "node_modules" / ".bin" / "newman.cmd",
+        ]
+    else:
+        local_candidates = [
+            Path.cwd() / ".continuum" / "vendor" / "npm" / "node_modules" / ".bin" / "newman",
+            Path.cwd() / "node_modules" / ".bin" / "newman",
+        ]
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    for candidate in local_candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def _kill_and_reap(pid: int) -> None:
     kill_tree(pid)
     proc = _BACKGROUND_PROCS.pop(pid, None)
@@ -509,7 +535,8 @@ class PostmanRunPlugin:
     type = "postman.run"
 
     def preflight(self, *, step_with: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
-        return {"ok": shutil.which("newman") is not None, "missing": ["newman"] if shutil.which("newman") is None else []}
+        newman = _resolve_newman_executable()
+        return {"ok": newman is not None, "missing": ["newman"] if newman is None else []}
 
     def run(self, *, step_name: str, step_with: dict[str, Any], ctx: dict[str, Any], step_index: int) -> StepResult:
         step_dir = Path(ctx["step_dir"](step_index, step_name))
@@ -518,7 +545,8 @@ class PostmanRunPlugin:
         run_id = str(ctx.get("run_id") or "")
         env_var = dict(step_with.get("envVar") or {})
         env_var.update({"traceId": trace_id, "runId": run_id})
-        if shutil.which("newman") is None:
+        newman = _resolve_newman_executable()
+        if newman is None:
             allow_missing = bool(step_with.get("allowMissingDependency", False))
             path = ctx["write_json"](
                 ctx["step_dir"](step_index, step_name),
@@ -539,7 +567,7 @@ class PostmanRunPlugin:
         if not isinstance(collection, str) or not collection.strip():
             raise StepExecutionError("postman.run requires with.collection")
 
-        command = ["newman", "run", collection]
+        command = [newman, "run", collection]
         environment = step_with.get("environment")
         if isinstance(environment, str) and environment.strip():
             command.extend(["-e", environment])
@@ -565,6 +593,8 @@ class PostmanRunPlugin:
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=timeout_sec,
         )
