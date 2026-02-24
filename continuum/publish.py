@@ -33,8 +33,6 @@ class PublishedRun:
     signature_key_id: str
     manifest_sha256: str
     report_path: str
-    signed: bool
-    policy_ok: bool
 
 
 def publish_run(*, run_id: str, runs_dir: Path = Path("runs"), site_dir: Path = Path("site"), keep_runs: int = 25) -> Path:
@@ -110,13 +108,11 @@ def _collect_published_runs(site_dir: Path) -> list[PublishedRun]:
                 ended_at=ended,
                 trace_id=trace_id,
                 git_head=git_head,
-                policy_ok=bool((summary.get("policy") or {}).get("ok")) if isinstance(summary.get("policy"), dict) else False,
-                signed=signature_path.is_file(),
+                policy_ok=policy_ok,
+                signed=signed,
                 signature_key_id=str(signature.get("keyId") or ""),
                 manifest_sha256=str(signature.get("manifest_sha256") or ""),
                 report_path=f"runs/{run_id}/report.html",
-                signed=signed,
-                policy_ok=policy_ok,
             )
         )
     return results
@@ -140,8 +136,6 @@ def _write_run_indexes(site_dir: Path, runs: list[PublishedRun]) -> None:
             "signatureKeyId": item.signature_key_id,
             "manifestSha256": item.manifest_sha256,
             "report": item.report_path,
-            "signed": item.signed,
-            "policyOk": item.policy_ok,
             "summary": f"runs/{item.run_id}/summary.json",
             "context": f"runs/{item.run_id}/context.json",
         }
