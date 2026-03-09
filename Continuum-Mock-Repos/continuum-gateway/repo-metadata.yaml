@@ -1,0 +1,16 @@
+repo: continuum-gateway
+domain: platform
+event_type: shared-library
+direction: shared
+jira_labels:
+  - shared-library
+  - repo-engine
+  - workflow-core
+keywords:
+  - shared_library
+  - shared
+dependencies:
+  - none
+workflow_tags:
+  - task-mapping
+  - mock-workflow
