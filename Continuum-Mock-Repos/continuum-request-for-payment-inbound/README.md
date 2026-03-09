@@ -1,16 +1,29 @@
 # continuum-request-for-payment-inbound
 
-Lightweight mock repository for Continuum multi-repo workspace testing.
+Standalone mock repository in the Continuum company-style multi-repo workspace.
 
-## Purpose
-- Provide predictable structure for `repo-engine` and `workflow-core` integration tests.
-- Include minimal build, source, handler, and config artifacts.
+## Repository intent
+- Domain: `request-for-payment`
+- Direction: `inbound`
+- Owned and built independently from sibling repos.
 
-## Run
-```bash
-./gradlew run
-```
-
-## Mock markers
+## Local structure
+- `settings.gradle.kts`
+- `build.gradle.kts`
+- `src/main/java/com/continuum/mock/Main.java`
+- `src/main/java/com/continuum/mock/handler/*`
 - `src/main/resources/application.yaml`
 - `src/main/resources/mock-scenarios.json`
+- `.repo-engine.yaml`
+
+## Git setup (independent repo)
+```bash
+git init
+git add .
+git commit -m "Initialize continuum-request-for-payment-inbound"
+```
+
+## Build/run (inside this repo only)
+```bash
+gradle run
+```

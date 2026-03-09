@@ -1,5 +1,4 @@
 {
-  "repo": "continuum-payment-ack-outbound",
   "scenarios": [
     "happy-path",
     "retryable-failure"

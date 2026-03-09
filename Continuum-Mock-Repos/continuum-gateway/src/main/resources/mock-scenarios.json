@@ -1,5 +1,4 @@
 {
-  "repo": "continuum-gateway",
   "scenarios": [
     "happy-path",
     "retryable-failure"

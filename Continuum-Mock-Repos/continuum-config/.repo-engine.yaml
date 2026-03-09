@@ -1,0 +1,10 @@
+repo:
+  name: continuum-config
+  domain: config
+  direction: platform
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: false
+  outbound: false
+  platform: true

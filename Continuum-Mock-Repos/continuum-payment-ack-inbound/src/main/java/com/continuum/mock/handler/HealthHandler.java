@@ -1,13 +1,9 @@
 package com.continuum.mock.handler;
 
-public class HealthHandler {
-    private final String serviceName;
+public final class HealthHandler {
+    private HealthHandler() {}
 
-    public HealthHandler(String serviceName) {
-        this.serviceName = serviceName;
-    }
-
-    public String handle() {
-        return "HEALTHY:" + serviceName;
+    public static String health() {
+        return "continuum-payment-ack-inbound:ok";
     }
 }

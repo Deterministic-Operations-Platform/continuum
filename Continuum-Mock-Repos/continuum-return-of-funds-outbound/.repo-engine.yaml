@@ -1,0 +1,10 @@
+repo:
+  name: continuum-return-of-funds-outbound
+  domain: return-of-funds
+  direction: outbound
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: false
+  outbound: true
+  platform: false

@@ -1,7 +1,9 @@
 package com.continuum.mock.handler;
 
-public class WorkflowHandler {
-    public String handle(String workItemId) {
-        return "WORKFLOW_ACCEPTED:" + workItemId;
+public final class WorkflowHandler {
+    private WorkflowHandler() {}
+
+    public static String route(String taskId) {
+        return "continuum-gateway:handled:" + taskId;
     }
 }

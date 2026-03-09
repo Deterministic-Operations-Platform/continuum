@@ -1,5 +1,4 @@
 {
-  "repo": "continuum-return-of-funds-outbound",
   "scenarios": [
     "happy-path",
     "retryable-failure"

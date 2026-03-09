@@ -1,0 +1,10 @@
+repo:
+  name: continuum-payment-return-inbound
+  domain: payment-return
+  direction: inbound
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: true
+  outbound: false
+  platform: false

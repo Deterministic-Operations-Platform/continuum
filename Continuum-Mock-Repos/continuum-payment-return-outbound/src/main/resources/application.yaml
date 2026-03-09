@@ -1,4 +1,5 @@
 mock:
   repo-name: continuum-payment-return-outbound
-  domain: payments
-  mode: lightweight
+  domain: payment-return
+  direction: outbound
+  mode: standalone-repo
