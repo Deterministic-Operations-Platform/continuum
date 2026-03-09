@@ -1,0 +1,15 @@
+continuum-common
+continuum-config
+continuum-integrations
+continuum-gateway
+continuum-automation
+continuum-credit-transfer-inbound
+continuum-credit-transfer-outbound
+continuum-payment-return-inbound
+continuum-payment-return-outbound
+continuum-request-for-payment-inbound
+continuum-request-for-payment-outbound
+continuum-payment-ack-inbound
+continuum-payment-ack-outbound
+continuum-return-of-funds-inbound
+continuum-return-of-funds-outbound

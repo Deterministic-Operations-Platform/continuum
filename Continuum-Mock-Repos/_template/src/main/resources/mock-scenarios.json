@@ -1,0 +1,7 @@
+{
+  "repo": "{{REPO_NAME}}",
+  "scenarios": [
+    "happy-path",
+    "retryable-failure"
+  ]
+}

@@ -1,0 +1,4 @@
+mock:
+  repo-name: continuum-config
+  domain: payments
+  mode: lightweight

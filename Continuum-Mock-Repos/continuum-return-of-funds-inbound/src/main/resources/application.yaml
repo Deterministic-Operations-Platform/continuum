@@ -1,0 +1,4 @@
+mock:
+  repo-name: continuum-return-of-funds-inbound
+  domain: payments
+  mode: lightweight

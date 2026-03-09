@@ -1,0 +1,7 @@
+{
+  "repo": "continuum-return-of-funds-inbound",
+  "scenarios": [
+    "happy-path",
+    "retryable-failure"
+  ]
+}
