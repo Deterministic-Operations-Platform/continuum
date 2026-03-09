@@ -1,0 +1,4 @@
+name: continuum-return-of-funds-inbound
+type: service
+lifecycle: scaffold
+notes: Temporary local scaffold; ready for standalone repo import.

@@ -1,0 +1,3 @@
+app:
+  name: continuum-gateway
+  environment: local

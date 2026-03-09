@@ -1,0 +1,3 @@
+app:
+  name: continuum-return-of-funds-outbound
+  environment: local

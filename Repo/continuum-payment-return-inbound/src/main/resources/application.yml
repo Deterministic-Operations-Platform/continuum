@@ -1,0 +1,3 @@
+app:
+  name: continuum-payment-return-inbound
+  environment: local
