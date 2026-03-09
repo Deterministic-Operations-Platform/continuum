@@ -1,0 +1,10 @@
+repo:
+  name: continuum-request-for-payment-outbound
+  domain: request-for-payment
+  direction: outbound
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: false
+  outbound: true
+  platform: false

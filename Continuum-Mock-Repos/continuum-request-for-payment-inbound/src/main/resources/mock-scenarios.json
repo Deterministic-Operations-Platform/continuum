@@ -1,5 +1,4 @@
 {
-  "repo": "continuum-request-for-payment-inbound",
   "scenarios": [
     "happy-path",
     "retryable-failure"

@@ -1,5 +1,4 @@
 {
-  "repo": "continuum-credit-transfer-inbound",
   "scenarios": [
     "happy-path",
     "retryable-failure"

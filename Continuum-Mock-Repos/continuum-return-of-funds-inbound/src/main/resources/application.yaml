@@ -1,4 +1,5 @@
 mock:
   repo-name: continuum-return-of-funds-inbound
-  domain: payments
-  mode: lightweight
+  domain: return-of-funds
+  direction: inbound
+  mode: standalone-repo

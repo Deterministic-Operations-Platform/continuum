@@ -1,0 +1,8 @@
+workspace:
+  name: Continuum-Mock-Repos
+  mode: multi-repo-container
+  build_root: false
+  monorepo: false
+  discovery:
+    source: repos.txt
+    metadata_file: .repo-engine.yaml

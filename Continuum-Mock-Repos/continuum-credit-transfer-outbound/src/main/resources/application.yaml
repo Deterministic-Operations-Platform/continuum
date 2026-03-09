@@ -1,4 +1,5 @@
 mock:
   repo-name: continuum-credit-transfer-outbound
-  domain: payments
-  mode: lightweight
+  domain: credit-transfer
+  direction: outbound
+  mode: standalone-repo

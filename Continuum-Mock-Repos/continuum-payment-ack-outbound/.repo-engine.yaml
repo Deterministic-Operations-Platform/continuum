@@ -1,0 +1,10 @@
+repo:
+  name: continuum-payment-ack-outbound
+  domain: payment-ack
+  direction: outbound
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: false
+  outbound: true
+  platform: false

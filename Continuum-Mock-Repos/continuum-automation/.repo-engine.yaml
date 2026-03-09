@@ -1,0 +1,10 @@
+repo:
+  name: continuum-automation
+  domain: automation
+  direction: platform
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: false
+  outbound: false
+  platform: true

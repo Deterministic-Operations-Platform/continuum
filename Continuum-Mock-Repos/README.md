@@ -1,6 +1,6 @@
-# Continuum Mock Repos
+# Continuum-Mock-Repos
 
-This workspace contains 15 lightweight, structurally consistent mock repositories for testing `repo-engine` and `workflow-core`.
+Company-style mock workspace container for **independent** Continuum repositories.
 
 ## Upgraded behavioral-testing layout
 - Shared dependency relationships are encoded in each repo `build.gradle.kts` and `repo-metadata.yaml`.
@@ -18,4 +18,20 @@ This workspace contains 15 lightweight, structurally consistent mock repositorie
 - `src/main/resources/mock-scenarios.json`
 - `README.md`
 
-A reusable scaffold source is also provided in `_template/`.
+## Repositories
+See `repos.txt` for the canonical list used by discovery tooling.
+
+## Repo-engine compatibility
+- Workspace-level discovery metadata: `workspace.yaml`
+- Canonical repo list: `repos.txt`
+- Per-repo metadata: `<repo>/.repo-engine.yaml`
+- Inbound/outbound/platform signals are encoded in each repo metadata file.
+
+## Initialize each repo as separate git repositories
+```bash
+./init-repos.sh
+```
+
+## No monorepo coupling
+The workspace intentionally has **no** root `settings.gradle*`, `build.gradle*`, or shared multi-project include file.
+Build and run commands must be executed from inside each repository directory.

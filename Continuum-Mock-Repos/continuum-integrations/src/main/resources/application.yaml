@@ -1,4 +1,5 @@
 mock:
   repo-name: continuum-integrations
-  domain: payments
-  mode: lightweight
+  domain: integrations
+  direction: platform
+  mode: standalone-repo

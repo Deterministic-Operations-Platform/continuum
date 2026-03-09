@@ -1,0 +1,10 @@
+repo:
+  name: continuum-credit-transfer-outbound
+  domain: credit-transfer
+  direction: outbound
+  standalone: true
+  workspace: Continuum-Mock-Repos
+signals:
+  inbound: false
+  outbound: true
+  platform: false

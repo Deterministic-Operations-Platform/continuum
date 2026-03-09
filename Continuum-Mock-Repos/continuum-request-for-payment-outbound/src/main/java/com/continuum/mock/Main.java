@@ -5,9 +5,8 @@ import com.continuum.mock.handler.WorkflowHandler;
 
 public class Main {
     public static void main(String[] args) {
-        String serviceName = "continuum-request-for-payment-outbound";
-        System.out.println("Starting mock service: " + serviceName);
-        System.out.println(new HealthHandler(serviceName).handle());
-        System.out.println(new WorkflowHandler().handle("sample-work-item"));
+        System.out.println("[continuum-request-for-payment-outbound] startup");
+        System.out.println(HealthHandler.health());
+        System.out.println(WorkflowHandler.route("sample-task"));
     }
 }

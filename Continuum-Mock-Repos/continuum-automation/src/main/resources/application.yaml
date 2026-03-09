@@ -1,4 +1,5 @@
 mock:
   repo-name: continuum-automation
-  domain: payments
-  mode: lightweight
+  domain: automation
+  direction: platform
+  mode: standalone-repo
