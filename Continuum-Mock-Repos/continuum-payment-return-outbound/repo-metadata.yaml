@@ -1,0 +1,18 @@
+repo: continuum-payment-return-outbound
+domain: payments
+event_type: payment-return-outbound
+direction: outbound
+jira_labels:
+  - payment-return-outbound
+  - repo-engine
+  - workflow-core
+keywords:
+  - payment_return_outbound
+  - outbound
+dependencies:
+  - continuum-common
+  - continuum-config
+  - continuum-integrations
+workflow_tags:
+  - task-mapping
+  - mock-workflow

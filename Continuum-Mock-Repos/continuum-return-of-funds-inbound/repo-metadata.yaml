@@ -1,0 +1,18 @@
+repo: continuum-return-of-funds-inbound
+domain: payments
+event_type: return-of-funds-inbound
+direction: inbound
+jira_labels:
+  - return-of-funds-inbound
+  - repo-engine
+  - workflow-core
+keywords:
+  - return_of_funds_inbound
+  - inbound
+dependencies:
+  - continuum-common
+  - continuum-config
+  - continuum-gateway
+workflow_tags:
+  - task-mapping
+  - mock-workflow

@@ -1,0 +1,18 @@
+repo: continuum-request-for-payment-inbound
+domain: payments
+event_type: request-for-payment-inbound
+direction: inbound
+jira_labels:
+  - request-for-payment-inbound
+  - repo-engine
+  - workflow-core
+keywords:
+  - request_for_payment_inbound
+  - inbound
+dependencies:
+  - continuum-common
+  - continuum-config
+  - continuum-gateway
+workflow_tags:
+  - task-mapping
+  - mock-workflow
