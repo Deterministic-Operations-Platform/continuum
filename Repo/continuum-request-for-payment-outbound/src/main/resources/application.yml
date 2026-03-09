@@ -1,0 +1,3 @@
+app:
+  name: continuum-request-for-payment-outbound
+  environment: local

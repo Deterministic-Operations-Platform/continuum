@@ -1,0 +1,4 @@
+name: continuum-payment-return-inbound
+type: service
+lifecycle: scaffold
+notes: Temporary local scaffold; ready for standalone repo import.

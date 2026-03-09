@@ -1,0 +1,3 @@
+app:
+  name: continuum-automation
+  environment: local

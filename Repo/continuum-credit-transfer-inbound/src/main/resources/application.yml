@@ -1,0 +1,3 @@
+app:
+  name: continuum-credit-transfer-inbound
+  environment: local
