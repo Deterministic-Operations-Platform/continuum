@@ -1,0 +1,4 @@
+mock:
+  repo-name: continuum-integrations
+  domain: payments
+  mode: lightweight

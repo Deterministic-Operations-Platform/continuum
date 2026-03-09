@@ -1,0 +1,4 @@
+mock:
+  repo-name: {{REPO_NAME}}
+  domain: payments
+  mode: lightweight

@@ -1,0 +1,7 @@
+{
+  "repo": "continuum-common",
+  "scenarios": [
+    "happy-path",
+    "retryable-failure"
+  ]
+}

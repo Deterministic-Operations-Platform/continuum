@@ -1,0 +1,4 @@
+mock:
+  repo-name: continuum-gateway
+  domain: payments
+  mode: lightweight

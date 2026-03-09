@@ -1,0 +1,4 @@
+mock:
+  repo-name: continuum-payment-ack-inbound
+  domain: payments
+  mode: lightweight

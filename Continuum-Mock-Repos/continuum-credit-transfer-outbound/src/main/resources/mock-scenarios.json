@@ -1,0 +1,7 @@
+{
+  "repo": "continuum-credit-transfer-outbound",
+  "scenarios": [
+    "happy-path",
+    "retryable-failure"
+  ]
+}

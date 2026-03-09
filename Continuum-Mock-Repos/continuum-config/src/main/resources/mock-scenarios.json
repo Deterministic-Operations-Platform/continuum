@@ -1,0 +1,7 @@
+{
+  "repo": "continuum-config",
+  "scenarios": [
+    "happy-path",
+    "retryable-failure"
+  ]
+}
