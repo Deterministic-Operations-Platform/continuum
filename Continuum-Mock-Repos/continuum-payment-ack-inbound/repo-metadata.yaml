@@ -1,0 +1,18 @@
+repo: continuum-payment-ack-inbound
+domain: payments
+event_type: payment-ack-inbound
+direction: inbound
+jira_labels:
+  - payment-ack-inbound
+  - repo-engine
+  - workflow-core
+keywords:
+  - payment_ack_inbound
+  - inbound
+dependencies:
+  - continuum-common
+  - continuum-config
+  - continuum-gateway
+workflow_tags:
+  - task-mapping
+  - mock-workflow

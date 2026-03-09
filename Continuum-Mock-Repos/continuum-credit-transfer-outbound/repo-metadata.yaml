@@ -1,0 +1,18 @@
+repo: continuum-credit-transfer-outbound
+domain: payments
+event_type: credit-transfer-outbound
+direction: outbound
+jira_labels:
+  - credit-transfer-outbound
+  - repo-engine
+  - workflow-core
+keywords:
+  - credit_transfer_outbound
+  - outbound
+dependencies:
+  - continuum-common
+  - continuum-config
+  - continuum-integrations
+workflow_tags:
+  - task-mapping
+  - mock-workflow

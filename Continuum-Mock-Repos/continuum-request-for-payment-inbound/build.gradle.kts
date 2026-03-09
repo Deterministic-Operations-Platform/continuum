@@ -12,6 +12,14 @@ java {
     }
 }
 
+
+dependencies {
+    implementation("com.continuum.mock:continuum-common:1.0.0-mock")
+    implementation("com.continuum.mock:continuum-config:1.0.0-mock")
+    implementation("com.continuum.mock:continuum-gateway:1.0.0-mock")
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+}
+
 application {
     mainClass.set("com.continuum.mock.Main")
 }

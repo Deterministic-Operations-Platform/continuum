@@ -2,10 +2,21 @@
 
 Company-style mock workspace container for **independent** Continuum repositories.
 
-## Workspace contract
-- This parent folder is a **container only**.
-- It is **not** a Gradle root project and **not** a monorepo build root.
-- Each child folder is a standalone repository with its own build, source, config, and git lifecycle.
+## Upgraded behavioral-testing layout
+- Shared dependency relationships are encoded in each repo `build.gradle.kts` and `repo-metadata.yaml`.
+- Event-focused repos include request/response models, mapper, validator, service, and handler/controller layers.
+- Intentional defects are documented in `BUG_SEEDS.md` and surfaced by failing tests in selected repos.
+- Task mapping metadata is available via `repo-metadata.yaml` in every repo.
+- Mixed repo states can be simulated using `repo-states/*.state` and `tools/describe-repo-state.sh`.
+
+## Layout convention (per repo)
+- `build.gradle.kts`
+- `settings.gradle.kts`
+- `repo-metadata.yaml`
+- `src/main/java/com/continuum/mock/Main.java`
+- `src/main/resources/application.yaml`
+- `src/main/resources/mock-scenarios.json`
+- `README.md`
 
 ## Repositories
 See `repos.txt` for the canonical list used by discovery tooling.
