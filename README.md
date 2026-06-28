@@ -1,39 +1,49 @@
-# Continuum Orchestrator
+# Continuum
 
-Continuum is a deterministic, plugin-based orchestration engine for high-stakes workflows. It produces replayable runs and audit-ready evidence bundles so teams can ship faster without increasing risk.
+Continuum is a standalone deterministic orchestration framework for regulated, high-stakes engineering workflows. It helps teams define replayable workflows, capture audit-grade evidence, enforce validation gates, and produce tamper-evident run bundles.
 
-## Quick start
+Continuum is **not** a Jira, Postman, Mongo, FedNow, or company-specific defect cockpit. The v0.1 demo uses mock payment-style steps only and contains no real credentials, real company data, or proprietary integrations.
+
+## CLI
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-continuum status
+continuum validate examples/workflows/demo.yaml
+continuum run examples/workflows/demo.yaml --run-id demo-v01
+continuum replay runs/demo-v01
+continuum ci examples/workflows/demo.yaml --run-id demo-ci
+continuum publish --run-id demo-v01
+continuum serve --site-dir site
 ```
 
-## Core commands
-- `continuum status` — show runtime health and available plugins.
-- `continuum run <scenario>` — execute a scenario and write evidence under `runs/<run-id>/`.
-- `continuum validate <scenario>` — validate scenario and runtime/plugin preflight checks.
-- `continuum publish --run-id <id>` — publish a run bundle to `site/`.
+## Workflow Definition
 
-## Scenario example
-```yaml
-name: fednow-happy-path
-rail: fednow
-steps:
-  - name: run payment flow
-    type: postman
-    with:
-      collection: collections/fednow.json
-```
+Workflows are YAML or JSON files with:
 
-## Docs
-- [Full CLI catalog](docs/cli.md)
-- [Bundle signing modes and environment variables](docs/security/signing.md)
-- [Live connector gates (Jira/Mongo)](docs/connectors/live-gates.md)
-- [Canonical scenario schema](docs/scenario-schema.md)
-- [Evidence bundle contract and tamper evidence](docs/evidence-bundle.md)
-- [Maintainer repo admin (including repository transfer)](docs/maintainers/repo-admin.md)
-- [Scenario guide](docs/scenarios.md)
-- [FedNow local run guide](docs/fednow-local-run-guide.md)
-- [FedNow runbook](docs/FEDNOW_RUNBOOK.md)
+- `workflow_id`
+- `inputs`
+- `expected_outputs`
+- `steps`
+- step `depends_on`
+- step `expected_outputs`
+- `validation_gates`
+- `evidence_requirements`
+
+See `examples/workflows/demo.yaml`.
+
+## Run Bundle
+
+Each run creates `runs/<run-id>/` with:
+
+- run manifest
+- step logs
+- input snapshot
+- output snapshot
+- validation result
+- evidence index
+- hash chain
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Evidence Model](docs/evidence-model.md)
+- [Replay](docs/replay.md)

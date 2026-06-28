@@ -19,6 +19,7 @@ from continuum.runtime import build_plan, validate_scenario
 from continuum.scenario import load_scenario_document
 from continuum.schema import validate_scenario_schema
 from continuum.verify import cmd_verify
+from continuum.workflow import WorkflowError, parse_workflow, replay_workflow, run_workflow, validate_workflow
 
 
 def _status_payload() -> dict[str, Any]:
@@ -52,7 +53,7 @@ def main() -> None:
     status.add_argument("--json", dest="as_json", action="store_true", help="Output health payload as JSON")
 
     run = sub.add_parser("run", help="Run a scenario from a YAML/JSON file")
-    run.add_argument("scenario", help="Path to scenario YAML/JSON")
+    run.add_argument("scenario", nargs="?", default="examples/workflows/demo.yaml", help="Path to workflow/scenario YAML/JSON")
     run.add_argument("--run-id", dest="run_id", default=None, help="Optional run id for deterministic replay")
     run.add_argument("--from", dest="from_selector", default=None, help="First step selector to include")
     run.add_argument("--to", dest="to_selector", default=None, help="Last step selector to include")
@@ -85,14 +86,17 @@ def main() -> None:
     golden.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
 
     validate = sub.add_parser("validate", help="Validate scenario without executing")
-    validate.add_argument("scenario", help="Path to scenario YAML/JSON")
+    validate.add_argument("scenario", nargs="?", default="examples/workflows/demo.yaml", help="Path to workflow/scenario YAML/JSON")
 
     plan = sub.add_parser("plan", help="Generate deterministic execution plan without executing")
     plan.add_argument("scenario", help="Path to scenario YAML/JSON")
     plan.add_argument("--run-id", dest="run_id", default=None, help="Run id used for deterministic plan output")
 
+    replay = sub.add_parser("replay", help="Replay a previous workflow run and compare drift")
+    replay.add_argument("run_dir", nargs="?", default=None, help="Path to previous run folder (default: latest runs/*)")
+
     publish = sub.add_parser("publish", help="Publish a run bundle to a static site folder")
-    publish.add_argument("--run-id", dest="run_id", required=True, help="Run id to publish from runs/<run-id>")
+    publish.add_argument("--run-id", dest="run_id", default=None, help="Run id to publish from runs/<run-id>")
     publish.add_argument("--runs-dir", dest="runs_dir", default="runs", help="Directory containing run bundles")
     publish.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
     publish.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="How many published runs to keep")
@@ -105,7 +109,7 @@ def main() -> None:
     keygen.add_argument("--out-dir", dest="out_dir", default="keys", help="Output directory for generated keys")
 
     ci = sub.add_parser("ci", help="Validate + run + publish in CI mode")
-    ci.add_argument("scenario", help="Path to scenario YAML/JSON")
+    ci.add_argument("scenario", nargs="?", default="examples/workflows/demo.yaml", help="Path to workflow/scenario YAML/JSON")
     ci.add_argument("--run-id", dest="run_id", default=None, help="Optional run id for deterministic replay")
     ci.add_argument("--site-dir", dest="site_dir", default="site", help="Directory where static site is generated")
     ci.add_argument("--keep-runs", dest="keep_runs", type=int, default=25, help="How many published runs to keep")
@@ -135,6 +139,15 @@ def main() -> None:
     if args.cmd == "run":
         scenario_path = Path(args.scenario)
         try:
+            document = load_scenario_document(scenario_path)
+            if isinstance(document, dict) and ("workflow_id" in document or "expected_outputs" in document):
+                summary = run_workflow(scenario_path, run_id=args.run_id)
+                rich_print(f"[green]Run[/green] [bold]{summary['run_id']}[/bold] finished with [bold]{summary['status']}[/bold]")
+                rich_print(f"Run folder: [bold]{summary['run_dir']}[/bold]")
+                if summary['status'] != 'succeeded':
+                    rich_print(json.dumps(summary['validation'], indent=2, sort_keys=True))
+                    raise SystemExit(1)
+                return
             scenario_text = scenario_path.read_text(encoding="utf-8")
             scenario = load_scenario(scenario_path)
             runtime = DeterministicRuntime(plugin_registry=PluginRegistry(), evidence_collector=EvidenceCollector())
@@ -212,6 +225,19 @@ def main() -> None:
 
     if args.cmd == "validate":
         document = load_scenario_document(args.scenario)
+        if isinstance(document, dict) and ("workflow_id" in document or "expected_outputs" in document):
+            try:
+                workflow = parse_workflow(args.scenario)
+                ok, errors = validate_workflow(workflow)
+            except WorkflowError as err:
+                rich_print(f"[red]ERROR[/red] {err}")
+                raise SystemExit(1) from err
+            if not ok:
+                for error in errors:
+                    rich_print(f"[red]ERROR[/red] {error}")
+                raise SystemExit(1)
+            rich_print(f"[green]OK[/green] workflow {workflow.workflow_id} validates")
+            return
         if not isinstance(document, dict):
             rich_print("[red]ERROR[/red] scenario document must be a mapping")
             raise SystemExit(1)
@@ -245,7 +271,26 @@ def main() -> None:
             rich_print(f"[green]Wrote[/green] {run_dir / 'plan.json'}")
         return
 
+    if args.cmd == "replay":
+        try:
+            run_dir = Path(args.run_dir) if args.run_dir else max(Path("runs").glob("*"), key=lambda p: p.stat().st_mtime)
+            report = replay_workflow(run_dir)
+            rich_print(f"[green]REPLAY {'PASS' if report['ok'] else 'DRIFT'}[/green] source={report['source_run_id']} replay={report['replay_run_id']}")
+            rich_print(json.dumps(report, indent=2, sort_keys=True))
+            if not report['ok']:
+                raise SystemExit(1)
+        except Exception as err:
+            rich_print(f"[red]REPLAY FAIL[/red] {err}")
+            raise SystemExit(1) from err
+        return
+
     if args.cmd == "publish":
+        if not args.run_id:
+            candidates = [p for p in Path(args.runs_dir).glob("*") if p.is_dir()]
+            if not candidates:
+                rich_print("[red]Publish failed[/red]: no runs found")
+                raise SystemExit(1)
+            args.run_id = max(candidates, key=lambda p: p.stat().st_mtime).name
         target = publish_run(
             run_id=args.run_id,
             runs_dir=Path(args.runs_dir),
@@ -272,6 +317,18 @@ def main() -> None:
     if args.cmd == "ci":
         scenario_path = Path(args.scenario)
         document = load_scenario_document(scenario_path)
+        if isinstance(document, dict) and ("workflow_id" in document or "expected_outputs" in document):
+            workflow = parse_workflow(scenario_path)
+            ok, errors = validate_workflow(workflow)
+            if not ok:
+                for error in errors: rich_print(f"[red]CI FAIL[/red] {error}")
+                raise SystemExit(1)
+            summary = run_workflow(scenario_path, run_id=args.run_id)
+            target = publish_run(run_id=summary["run_id"], runs_dir=Path("runs"), site_dir=Path(args.site_dir), keep_runs=args.keep_runs)
+            rich_print(f"[green]CI published[/green] {target}")
+            if summary["status"] != "succeeded": raise SystemExit(1)
+            rich_print(f"[green]CI PASS[/green] run {summary['run_id']}")
+            return
         if not isinstance(document, dict):
             rich_print("[red]CI FAIL[/red] scenario document must be a mapping")
             raise SystemExit(1)

@@ -1,0 +1,65 @@
+workflow_id: demo-payment-orchestration
+version: "0.1"
+inputs:
+  payment_id: DEMO-PAY-0001
+  amount: "125.00"
+  currency: USD
+expected_outputs:
+  final_status: settled
+evidence_requirements:
+  - output-contract
+validation_gates:
+  - evidence-required
+  - output-contract
+steps:
+  - id: intake
+    name: Capture payment intent
+    action: mock.capture
+    inputs:
+      output:
+        status: captured
+        payment_id: DEMO-PAY-0001
+    expected_outputs:
+      required_fields: [status, payment_id]
+      equals:
+        status: captured
+    evidence: [input-snapshot]
+  - id: risk-check
+    name: Deterministic risk validation
+    action: mock.validate
+    depends_on: [intake]
+    inputs:
+      output:
+        status: ok
+        risk_score: 12
+    expected_outputs:
+      required_fields: [status, risk_score]
+      equals:
+        status: ok
+    evidence: [validation-report]
+  - id: approval
+    name: Approval gate
+    action: mock.approve
+    depends_on: [risk-check]
+    inputs:
+      output:
+        status: approved
+        approver: policy-engine
+    expected_outputs:
+      required_fields: [status, approver]
+      equals:
+        status: approved
+    evidence: [approval-record]
+  - id: settlement
+    name: Mock settlement
+    action: mock.settle
+    depends_on: [approval]
+    inputs:
+      output:
+        status: settled
+        final_status: settled
+    expected_outputs:
+      required_fields: [status, final_status]
+      equals:
+        final_status: settled
+    evidence: [settlement-receipt]

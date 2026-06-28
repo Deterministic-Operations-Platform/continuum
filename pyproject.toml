@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,9 +9,9 @@ description = "Continuum Orchestrator starter CLI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "pyyaml>=6.0.1",
-  "rich>=15.0.0",
-  "cryptography>=42.0.0",
+  "pyyaml>=6.0.3",
+  "rich>=13.7.1",
+  "cryptography>=49.0.0",
 ]
 
 [project.scripts]
