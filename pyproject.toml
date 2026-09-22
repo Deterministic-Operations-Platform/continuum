@@ -10,8 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "pyyaml>=6.0.3",
+dependabot/pip/rich-gte-15.0.0
+  "rich>=15.0.0",
+  "cryptography>=49.0.0",
   "rich>=13.7.1",
   "cryptography>=50.0.1",
+
 ]
 
 [project.scripts]
