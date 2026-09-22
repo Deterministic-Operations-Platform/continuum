@@ -11,6 +11,16 @@ __pycache__/
 .tmp/**
 !.tmp/.gitkeep
 .venv/
+.pytest_cache/
+node_modules/
+*.egg-info/
+coverage/
+htmlcov/
+*.coverage
+*.log
+logs/
+build/
+dist/
 .continuum/
 .codex/
 .vscode/
