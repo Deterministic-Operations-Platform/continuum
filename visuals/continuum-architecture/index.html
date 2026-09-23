@@ -1148,7 +1148,7 @@
       ]
     };
 
-    const workflowYaml = \`workflow_id: controlled-release-verification
+    const workflowYaml = `workflow_id: controlled-release-verification
 version: "0.1"
 inputs:
   artifact_id: BUILD-2048
@@ -1209,7 +1209,7 @@ steps:
       required_fields: [status, final_status]
       equals:
         final_status: complete
-    evidence: [bundle-record]\`;
+    evidence: [bundle-record]`;
 
     const state = {
       stage: 0,
