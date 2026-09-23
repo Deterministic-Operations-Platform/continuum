@@ -1,0 +1,1611 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Continuum — Deterministic Architecture Experience</title>
+  <meta name="description" content="Interactive visualization of Continuum's deterministic, replayable, auditable workflow architecture." />
+  <style>
+    :root {
+      --bg: #081018;
+      --bg-2: #0b141e;
+      --panel: #0e1924;
+      --panel-2: #101e2a;
+      --line: rgba(157, 191, 212, .18);
+      --line-strong: rgba(157, 191, 212, .34);
+      --text: #edf7fb;
+      --muted: #8fa7b6;
+      --cyan: #58e7dc;
+      --cyan-2: #3cb7d4;
+      --cyan-dim: rgba(88, 231, 220, .14);
+      --amber: #f6b85f;
+      --amber-dim: rgba(246, 184, 95, .14);
+      --ok: #66e0a3;
+      --bad: #ff7b73;
+      --mono: "DM Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --radius: 10px;
+      --shadow: 0 24px 70px rgba(0,0,0,.26);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 78% 8%, rgba(60,183,212,.11), transparent 28rem),
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px),
+        var(--bg);
+      background-size: auto, 34px 34px, 34px 34px, auto;
+      font-family: var(--sans);
+      overflow-x: hidden;
+    }
+
+    button, select { font: inherit; }
+    button {
+      color: inherit;
+      border: 0;
+      background: none;
+      cursor: pointer;
+    }
+    button:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 3px;
+    }
+    .shell {
+      width: min(1540px, calc(100% - 36px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      gap: 24px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 180px;
+    }
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      background: linear-gradient(135deg, rgba(88,231,220,.18), rgba(60,183,212,.03));
+      color: var(--cyan);
+      font: 700 14px var(--mono);
+    }
+    .brand-copy strong {
+      display: block;
+      font-size: 13px;
+      letter-spacing: .01em;
+    }
+    .brand-copy span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font: 500 9px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .top-meta {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font: 500 9px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .signal {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0 5px rgba(102,224,163,.09);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0,1.2fr) minmax(420px,.8fr);
+      gap: 64px;
+      align-items: end;
+      padding: 52px 0 34px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 16px;
+      color: var(--cyan);
+      font: 500 10px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+    h1 {
+      margin: 0;
+      max-width: 980px;
+      font-size: clamp(48px, 6.5vw, 98px);
+      line-height: .93;
+      letter-spacing: -.045em;
+      font-weight: 550;
+    }
+    .hero p {
+      margin: 22px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: clamp(15px,1.6vw,19px);
+      line-height: 1.7;
+    }
+    .hero-side {
+      justify-self: stretch;
+      padding: 22px;
+      border: 1px solid var(--line);
+      background: rgba(14,25,36,.72);
+      backdrop-filter: blur(12px);
+      box-shadow: var(--shadow);
+    }
+    .hero-side h2 {
+      margin: 0 0 16px;
+      font: 500 11px var(--mono);
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: .08em;
+    }
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .tag {
+      padding: 7px 9px;
+      border: 1px solid var(--line-strong);
+      background: rgba(255,255,255,.018);
+      font: 500 9px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .positioning {
+      margin-top: 18px;
+      padding-top: 17px;
+      border-top: 1px solid var(--line);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .proof-strip {
+      display: grid;
+      grid-template-columns: repeat(5,1fr);
+      border-bottom: 1px solid var(--line);
+    }
+    .proof-strip div {
+      padding: 14px 16px;
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font: 500 9px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .proof-strip div + div { border-left: 1px solid var(--line); }
+    .proof-strip b {
+      color: var(--cyan);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .stage-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      background: rgba(8,16,24,.92);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 16px 45px rgba(0,0,0,.18);
+    }
+    .stage-toolbar {
+      min-height: 48px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+    }
+    .tour-control, .step-controls button {
+      min-height: 48px;
+      padding: 0 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font: 500 9px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .tour-control:hover, .step-controls button:hover { color: var(--text); background: rgba(255,255,255,.025); }
+    .tour-control { border-right: 1px solid var(--line); }
+    .stage-title {
+      padding: 0 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text);
+      font: 500 10px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .step-controls {
+      display: flex;
+      border-left: 1px solid var(--line);
+    }
+    .step-controls button + button { border-left: 1px solid var(--line); }
+    .stage-rail {
+      display: grid;
+      grid-template-columns: repeat(9, minmax(106px,1fr));
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    .stage-btn {
+      min-height: 62px;
+      padding: 10px 12px;
+      border-right: 1px solid var(--line);
+      text-align: left;
+      position: relative;
+      color: var(--muted);
+      transition: background .2s ease, color .2s ease;
+    }
+    .stage-btn:last-child { border-right: 0; }
+    .stage-btn .n {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--cyan);
+      font: 500 8px var(--mono);
+      opacity: .65;
+    }
+    .stage-btn .label {
+      display: block;
+      font: 500 9px/1.35 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .035em;
+    }
+    .stage-btn::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 100%;
+      bottom: 0;
+      height: 2px;
+      background: var(--cyan);
+      transition: right .3s ease;
+    }
+    .stage-btn.active {
+      color: var(--text);
+      background: var(--cyan-dim);
+    }
+    .stage-btn.active::after { right: 0; }
+    .stage-btn.done { color: #b5c8d2; }
+    .stage-btn.done::after { right: 0; opacity: .35; }
+
+    .workspace {
+      padding: 18px 0 28px;
+    }
+    .architecture-canvas {
+      min-height: 690px;
+      display: grid;
+      grid-template-columns: 1.15fr 1fr .85fr;
+      transition: grid-template-columns .45s cubic-bezier(.2,.8,.2,1);
+      border: 1px solid var(--line);
+      background: rgba(7,14,21,.84);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .experience[data-stage="0"] .architecture-canvas { grid-template-columns: 1.38fr .92fr .70fr; }
+    .experience[data-stage="1"] .architecture-canvas,
+    .experience[data-stage="2"] .architecture-canvas,
+    .experience[data-stage="3"] .architecture-canvas { grid-template-columns: .78fr 1.42fr .8fr; }
+    .experience[data-stage="4"] .architecture-canvas,
+    .experience[data-stage="5"] .architecture-canvas,
+    .experience[data-stage="6"] .architecture-canvas { grid-template-columns: .73fr 1fr 1.27fr; }
+    .experience[data-stage="7"] .architecture-canvas,
+    .experience[data-stage="8"] .architecture-canvas { grid-template-columns: .68fr .82fr 1.5fr; }
+
+    .zone {
+      min-width: 0;
+      position: relative;
+      padding: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,.011), transparent);
+      transition: background .3s ease;
+    }
+    .zone + .zone { border-left: 1px solid var(--line); }
+    .zone.active-zone { background: linear-gradient(180deg, rgba(88,231,220,.035), transparent); }
+    .zone-head {
+      min-height: 39px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    .zone-kicker {
+      margin: 0 0 5px;
+      color: var(--cyan);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+    .zone-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+    .micro {
+      color: var(--muted);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .toggle {
+      display: inline-flex;
+      border: 1px solid var(--line-strong);
+      background: rgba(0,0,0,.14);
+    }
+    .toggle button {
+      min-height: 30px;
+      padding: 0 10px;
+      color: var(--muted);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+    }
+    .toggle button.active {
+      color: var(--bg);
+      background: var(--cyan);
+    }
+
+    .code-card {
+      height: calc(100% - 60px);
+      min-height: 560px;
+      border: 1px solid var(--line);
+      background: #07111a;
+      overflow: hidden;
+      position: relative;
+    }
+    .code-meta {
+      height: 38px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    pre {
+      margin: 0;
+      height: calc(100% - 38px);
+      overflow: auto;
+      padding: 16px 17px 24px;
+      color: #cbe2ea;
+      font: 400 11px/1.65 var(--mono);
+      tab-size: 2;
+      scrollbar-width: thin;
+    }
+    .code-focus {
+      position: absolute;
+      pointer-events: none;
+      left: 10px;
+      right: 10px;
+      top: 74px;
+      height: 23px;
+      border: 1px solid rgba(88,231,220,.32);
+      background: rgba(88,231,220,.045);
+      box-shadow: inset 3px 0 0 var(--cyan);
+      opacity: 0;
+      transform: translateY(-5px);
+      transition: opacity .3s ease, transform .3s ease, top .5s ease;
+    }
+    .experience[data-stage="0"] .code-focus { opacity: 1; transform: none; }
+    .format-note {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      max-width: 230px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      background: rgba(7,17,26,.92);
+      color: var(--muted);
+      font: 400 8px/1.45 var(--mono);
+    }
+
+    .graph-shell {
+      height: calc(100% - 60px);
+      min-height: 560px;
+      position: relative;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px),
+        #0a141e;
+      background-size: 28px 28px;
+      overflow: hidden;
+    }
+    .plan-strip {
+      height: 44px;
+      display: flex;
+      gap: 7px;
+      align-items: center;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+      overflow-x: auto;
+    }
+    .plan-strip span {
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+      transition: .25s ease;
+    }
+    .plan-strip span.plan-active {
+      color: var(--bg);
+      background: var(--cyan);
+      border-color: var(--cyan);
+    }
+    .graph {
+      position: absolute;
+      inset: 44px 0 155px;
+    }
+    .graph svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .edge {
+      fill: none;
+      stroke: rgba(88,231,220,.34);
+      stroke-width: 1.15;
+      stroke-dasharray: 5 6;
+      animation: dash 10s linear infinite;
+      vector-effect: non-scaling-stroke;
+    }
+    .edge.edge-active { stroke: var(--cyan); stroke-width: 1.7; filter: drop-shadow(0 0 5px rgba(88,231,220,.4)); }
+    .node {
+      position: absolute;
+      width: 116px;
+      min-height: 76px;
+      transform: translate(-50%,-50%);
+      padding: 10px;
+      border: 1px solid var(--line-strong);
+      background: rgba(14,25,36,.96);
+      text-align: left;
+      transition: transform .25s ease, border-color .25s ease, background .25s ease, opacity .25s ease;
+    }
+    .node:hover { transform: translate(-50%,-50%) translateY(-3px); border-color: var(--cyan); }
+    .node .node-id {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--cyan);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+    }
+    .node strong {
+      display: block;
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .node small {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font: 400 7px var(--mono);
+      text-transform: uppercase;
+    }
+    .node.running { border-color: var(--cyan); background: rgba(88,231,220,.08); }
+    .node.passed { border-color: rgba(102,224,163,.52); }
+    .node.failed { border-color: rgba(255,123,115,.8); background: rgba(255,123,115,.07); }
+    .node.blocked { opacity: .34; }
+    .node-status {
+      position: absolute;
+      right: 7px;
+      top: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #536572;
+    }
+    .node.running .node-status { background: var(--cyan); box-shadow: 0 0 0 5px rgba(88,231,220,.10); }
+    .node.passed .node-status { background: var(--ok); }
+    .node.failed .node-status { background: var(--bad); }
+    .scheduler-token {
+      position: absolute;
+      z-index: 5;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 0 7px rgba(88,231,220,.10), 0 0 22px rgba(88,231,220,.55);
+      opacity: 0;
+      transition: left .75s cubic-bezier(.2,.8,.2,1), top .75s cubic-bezier(.2,.8,.2,1), opacity .2s ease;
+      transform: translate(-50%,-50%);
+    }
+    .scheduler-token.visible { opacity: 1; }
+
+    .node-detail {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      min-height: 126px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: rgba(7,17,26,.93);
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 10px 14px;
+    }
+    .node-detail h3 {
+      margin: 0;
+      font-size: 13px;
+    }
+    .node-detail p {
+      margin: 0;
+      color: var(--muted);
+      font: 400 8px/1.55 var(--mono);
+    }
+    .node-detail .detail-tags {
+      grid-column: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .node-detail .detail-tags span {
+      padding: 4px 6px;
+      border: 1px solid var(--line);
+      color: #b9d0da;
+      font: 400 7px var(--mono);
+    }
+    .gate-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+    .ghost-btn, .danger-btn, .primary-btn {
+      min-height: 31px;
+      padding: 0 10px;
+      border: 1px solid var(--line-strong);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .035em;
+    }
+    .ghost-btn:hover { border-color: var(--cyan); }
+    .danger-btn {
+      color: var(--amber);
+      border-color: rgba(246,184,95,.36);
+      background: var(--amber-dim);
+    }
+    .primary-btn {
+      color: var(--bg);
+      background: var(--cyan);
+      border-color: var(--cyan);
+    }
+
+    .artifact-shell {
+      height: calc(100% - 60px);
+      min-height: 560px;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      background: #0a141e;
+      overflow: hidden;
+    }
+    .artifact-tabs {
+      display: flex;
+      min-height: 40px;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    .artifact-tabs button {
+      padding: 0 11px;
+      color: var(--muted);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+      border-right: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    .artifact-tabs button.active {
+      color: var(--text);
+      background: rgba(88,231,220,.07);
+      box-shadow: inset 0 -2px 0 var(--cyan);
+    }
+    .artifact-content {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 13px;
+      scrollbar-width: thin;
+    }
+    .artifact-view { display: none; }
+    .artifact-view.active { display: block; animation: fadeIn .25s ease both; }
+
+    .evidence-list, .gate-list, .hash-list, .bundle-tree, .replay-grid {
+      display: grid;
+      gap: 8px;
+    }
+    .evidence-row, .gate-row, .hash-block, .bundle-row, .replay-card {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.016);
+    }
+    .evidence-row {
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+      transform: translateY(5px);
+      opacity: .55;
+      transition: .3s ease;
+    }
+    .evidence-row.visible { transform: none; opacity: 1; border-color: rgba(88,231,220,.26); }
+    .evidence-row strong {
+      display: block;
+      font-size: 10px;
+    }
+    .evidence-row span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font: 400 7px var(--mono);
+    }
+    .hash-pill {
+      max-width: 125px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 4px 6px;
+      color: var(--cyan);
+      border: 1px solid rgba(88,231,220,.24);
+      font: 400 7px var(--mono);
+    }
+
+    .gate-row {
+      padding: 9px 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      font: 400 8px var(--mono);
+    }
+    .gate-row .status {
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .gate-row.pass .status { color: var(--ok); }
+    .gate-row.fail .status { color: var(--bad); }
+    .gate-row.pending .status { color: var(--muted); }
+
+    .inspect-card {
+      border: 1px solid var(--line);
+      background: #07111a;
+      min-height: 200px;
+    }
+    .inspect-card .inspect-head {
+      min-height: 35px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+    }
+    .inspect-card pre {
+      height: auto;
+      max-height: 270px;
+      padding: 12px;
+      font-size: 9px;
+    }
+    .output-tabs {
+      display: flex;
+      gap: 5px;
+      margin-bottom: 9px;
+      flex-wrap: wrap;
+    }
+    .output-tabs button {
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font: 500 7px var(--mono);
+      text-transform: uppercase;
+    }
+    .output-tabs button.active { color: var(--text); border-color: var(--cyan); }
+
+    .hash-block {
+      position: relative;
+      padding: 10px;
+      transition: .25s ease;
+    }
+    .hash-block + .hash-block::before {
+      content: "↓ prev_hash";
+      position: absolute;
+      top: -13px;
+      left: 14px;
+      color: var(--muted);
+      background: #0a141e;
+      padding: 0 4px;
+      font: 400 7px var(--mono);
+    }
+    .hash-block .hash-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .hash-block strong {
+      font-size: 10px;
+    }
+    .hash-block code {
+      color: var(--cyan);
+      font: 400 7px var(--mono);
+      cursor: pointer;
+    }
+    .hash-block p {
+      margin: 0;
+      color: var(--muted);
+      font: 400 7px/1.5 var(--mono);
+    }
+    .hash-block.broken {
+      border-color: rgba(255,123,115,.65);
+      background: rgba(255,123,115,.055);
+    }
+    .hash-block.broken code { color: var(--bad); }
+    .integrity-banner {
+      margin-bottom: 9px;
+      padding: 9px 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid rgba(102,224,163,.28);
+      background: rgba(102,224,163,.06);
+      color: var(--ok);
+      font: 500 8px var(--mono);
+      text-transform: uppercase;
+    }
+    .integrity-banner.bad {
+      color: var(--bad);
+      border-color: rgba(255,123,115,.34);
+      background: rgba(255,123,115,.06);
+    }
+
+    .bundle-tree {
+      font-family: var(--mono);
+      font-size: 8px;
+    }
+    .bundle-row {
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #c4d8df;
+      transform: translateX(8px);
+      opacity: .25;
+      transition: .35s ease;
+    }
+    .bundle-row.visible { transform: none; opacity: 1; }
+    .bundle-row .file-dot {
+      width: 6px;
+      height: 6px;
+      border: 1px solid var(--cyan);
+      background: rgba(88,231,220,.15);
+    }
+    .bundle-row .indent { width: 12px; }
+    .bundle-row .bundle-note {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 7px;
+    }
+
+    .replay-card {
+      padding: 11px;
+    }
+    .replay-card .replay-label {
+      margin-bottom: 6px;
+      color: var(--cyan);
+      font: 500 7px var(--mono);
+      text-transform: uppercase;
+    }
+    .replay-card strong {
+      display: block;
+      font-size: 11px;
+    }
+    .replay-card code {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font: 400 7px var(--mono);
+      word-break: break-all;
+    }
+    .replay-arrow {
+      text-align: center;
+      color: var(--cyan);
+      font: 500 9px var(--mono);
+    }
+    .replay-result {
+      padding: 10px;
+      border: 1px solid rgba(102,224,163,.28);
+      color: var(--ok);
+      background: rgba(102,224,163,.06);
+      font: 500 8px/1.5 var(--mono);
+      text-transform: uppercase;
+    }
+    .replay-result.drift {
+      color: var(--bad);
+      border-color: rgba(255,123,115,.32);
+      background: rgba(255,123,115,.06);
+    }
+
+    .stage-explainer {
+      margin-top: 10px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.015);
+      color: var(--muted);
+      font: 400 8px/1.55 var(--mono);
+    }
+    .stage-explainer strong { color: var(--text); font-weight: 500; }
+
+    footer {
+      padding: 0 0 38px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 30px;
+      color: var(--muted);
+      font: 400 8px/1.6 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .035em;
+    }
+    footer strong { color: var(--text); font-weight: 500; }
+
+    @keyframes dash { to { stroke-dashoffset: -44; } }
+    @keyframes fadeIn { from { opacity:0; transform: translateY(4px); } to { opacity:1; transform:none; } }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(88,231,220,.08); }
+      50% { box-shadow: 0 0 0 9px rgba(88,231,220,0); }
+    }
+
+    @media (max-width: 1100px) {
+      .hero { grid-template-columns: 1fr; gap: 28px; }
+      .hero-side { max-width: 720px; }
+      .proof-strip { grid-template-columns: 1fr 1fr; }
+      .proof-strip div { border-bottom: 1px solid var(--line); }
+      .proof-strip div + div { border-left: 0; }
+      .proof-strip div:nth-child(even) { border-left: 1px solid var(--line); }
+      .architecture-canvas,
+      .experience[data-stage] .architecture-canvas {
+        grid-template-columns: 1fr 1fr;
+      }
+      .zone-artifacts { grid-column: 1 / -1; border-left: 0 !important; border-top: 1px solid var(--line); }
+      .artifact-shell { min-height: 470px; }
+    }
+
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 20px, 1540px); }
+      .top-meta { display:none; }
+      .hero { padding-top: 34px; }
+      .proof-strip { grid-template-columns: 1fr; }
+      .proof-strip div:nth-child(even), .proof-strip div + div { border-left: 0; }
+      .stage-toolbar { grid-template-columns: auto 1fr; }
+      .stage-title { display: none; }
+      .step-controls { justify-self: end; }
+      .architecture-canvas,
+      .experience[data-stage] .architecture-canvas {
+        display: block;
+      }
+      .zone + .zone { border-left: 0; border-top: 1px solid var(--line); }
+      .code-card, .graph-shell, .artifact-shell { min-height: 500px; height: auto; }
+      .code-card { height: 520px; }
+      .graph-shell { height: 570px; }
+      .artifact-shell { height: 530px; }
+      .graph { inset-bottom: 150px; }
+      footer { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .001ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="experience" id="experience" data-stage="0">
+    <header class="shell topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">C</div>
+        <div class="brand-copy">
+          <strong>Continuum</strong>
+          <span>Architecture Experience</span>
+        </div>
+      </div>
+      <div class="top-meta"><span class="signal"></span> Local deterministic demo · No external systems</div>
+    </header>
+
+    <section class="shell hero" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">Deterministic orchestration · Replayable evidence</p>
+        <h1 id="page-title">Deterministic execution you can replay, inspect, and audit.</h1>
+        <p>Define a workflow. Execute the same plan. Capture the evidence. Prove what happened.</p>
+      </div>
+      <aside class="hero-side" aria-label="Continuum positioning">
+        <h2>Product position</h2>
+        <div class="tag-row">
+          <span class="tag">Deterministic</span>
+          <span class="tag">Replayable</span>
+          <span class="tag">Auditable</span>
+          <span class="tag">Vendor-neutral</span>
+        </div>
+        <div class="positioning">A standalone orchestration framework for high-stakes engineering workflows with dependency-aware execution, validation gates, evidence capture, SHA-256 integrity, and replay drift detection.</div>
+      </aside>
+    </section>
+
+    <section class="shell proof-strip" aria-label="Architecture highlights">
+      <div><b>01</b> YAML / JSON definitions</div>
+      <div><b>02</b> Dependency-aware execution</div>
+      <div><b>03</b> Validation gates</div>
+      <div><b>04</b> Evidence + SHA-256 integrity</div>
+      <div><b>05</b> Replay drift detection</div>
+    </section>
+
+    <main class="shell workspace">
+      <section class="stage-wrap" aria-label="Architecture tour">
+        <div class="stage-toolbar">
+          <button class="tour-control" id="playBtn" aria-pressed="false"><span id="playIcon">▶</span><span id="playText">Play guided tour</span></button>
+          <div class="stage-title" id="stageTitle">01 · Workflow YAML / JSON</div>
+          <div class="step-controls">
+            <button id="prevBtn" aria-label="Previous architecture stage">← Prev</button>
+            <button id="nextBtn" aria-label="Next architecture stage">Next →</button>
+          </div>
+        </div>
+        <div class="stage-rail" id="stageRail"></div>
+      </section>
+
+      <section class="architecture-canvas" aria-label="Interactive Continuum architecture canvas">
+        <section class="zone zone-code active-zone" id="zoneCode">
+          <div class="zone-head">
+            <div>
+              <p class="zone-kicker">Definition</p>
+              <h2 class="zone-title">Workflow source</h2>
+            </div>
+            <div class="toggle" aria-label="Workflow format">
+              <button id="yamlBtn" class="active" aria-pressed="true">YAML</button>
+              <button id="jsonBtn" aria-pressed="false">JSON</button>
+            </div>
+          </div>
+          <div class="code-card">
+            <div class="code-meta"><span id="codeFilename">workflow.yaml</span><span>Illustrative · real schema</span></div>
+            <pre id="workflowCode" tabindex="0" aria-label="Illustrative Continuum workflow definition"></pre>
+            <div class="code-focus" id="codeFocus"></div>
+            <div class="format-note">Illustrative vendor-neutral workflow using the real Continuum workflow fields and deterministic <code>mock</code> action pattern.</div>
+          </div>
+        </section>
+
+        <section class="zone zone-graph" id="zoneGraph">
+          <div class="zone-head">
+            <div>
+              <p class="zone-kicker">Execution</p>
+              <h2 class="zone-title">Dependency plan</h2>
+            </div>
+            <span class="micro" id="graphMode">DAG · topological plan</span>
+          </div>
+          <div class="graph-shell">
+            <div class="plan-strip" id="planStrip" aria-label="Topologically sorted execution plan"></div>
+            <div class="graph" id="graph">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <path id="edge0" class="edge" d="M18,50 C28,50 28,50 37,50"></path>
+                <path id="edge1" class="edge" d="M43,50 C53,50 53,50 62,50"></path>
+                <path id="edge2" class="edge" d="M68,50 C78,50 78,50 87,50"></path>
+              </svg>
+              <div id="schedulerToken" class="scheduler-token" aria-hidden="true"></div>
+            </div>
+            <div class="node-detail" id="nodeDetail" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="zone zone-artifacts" id="zoneArtifacts">
+          <div class="zone-head">
+            <div>
+              <p class="zone-kicker">Evidence</p>
+              <h2 class="zone-title">Run artifacts</h2>
+            </div>
+            <span class="micro" id="artifactStatus">Awaiting execution</span>
+          </div>
+          <div class="artifact-shell">
+            <div class="artifact-tabs" id="artifactTabs">
+              <button data-view="validation" class="active">Gates</button>
+              <button data-view="evidence">Evidence</button>
+              <button data-view="outputs">Logs / outputs</button>
+              <button data-view="hashes">Hash chain</button>
+              <button data-view="bundle">Run bundle</button>
+              <button data-view="replay">Replay</button>
+            </div>
+            <div class="artifact-content">
+              <div class="artifact-view active" id="view-validation"></div>
+              <div class="artifact-view" id="view-evidence"></div>
+              <div class="artifact-view" id="view-outputs"></div>
+              <div class="artifact-view" id="view-hashes"></div>
+              <div class="artifact-view" id="view-bundle"></div>
+              <div class="artifact-view" id="view-replay"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <div class="stage-explainer" id="stageExplainer" aria-live="polite"></div>
+    </main>
+
+    <footer class="shell">
+      <div><strong>Scope:</strong> visualizes Continuum's workflow → deterministic plan → validation → evidence → hash chain → run bundle → replay path. No company-specific integrations are implied.</div>
+      <div>Tamper-evident ≠ tamper-proof · SHA-256 integrity indicators</div>
+    </footer>
+  </div>
+
+  <script>
+    const stages = [
+      { label: "Workflow YAML / JSON", short: "Definition", artifact: "validation", explain: "Continuum starts from a versioned YAML or JSON workflow definition. The parser validates required structure before execution." },
+      { label: "Dependency graph", short: "DAG", artifact: "validation", explain: "Step dependencies become a directed plan. Continuum topologically sorts the graph and rejects cyclic dependencies." },
+      { label: "Deterministic execution", short: "Execution", artifact: "validation", explain: "The scheduler follows the same resolved plan instead of choosing a random order. This demo advances ingest → verify → approve → package." },
+      { label: "Validation gates", short: "Gates", artifact: "validation", explain: "Each step can enforce required fields, equality contracts, and evidence requirements. Contract failures stop the run." },
+      { label: "Evidence collection", short: "Evidence", artifact: "evidence", explain: "Evidence declared globally and per step is materialized and indexed with SHA-256 digests for later inspection." },
+      { label: "Logs + output snapshots", short: "Snapshots", artifact: "outputs", explain: "Continuum writes readable step logs, per-step JSON outputs, and a normalized outputs_snapshot.json for the complete run." },
+      { label: "Tamper-evident hash chain", short: "Integrity", artifact: "hashes", explain: "Each workflow step contributes an ordered hash record that includes the prior hash. A changed output no longer matches the recorded chain." },
+      { label: "Run bundle", short: "Bundle", artifact: "bundle", explain: "The evidence package is assembled under runs/<run-id>/ with the manifest, workflow snapshot, logs, outputs, validation result, evidence index, hash chain, and summary." },
+      { label: "Replay", short: "Replay", artifact: "replay", explain: "Replay reads the captured workflow snapshot, runs it again, and compares output snapshots. Matching outputs mean no drift; differences are reported." }
+    ];
+
+    const steps = [
+      {
+        id: "ingest", name: "Capture immutable inputs", action: "mock", deps: [],
+        evidence: ["output-contract","input-snapshot"],
+        required: ["status","artifact_id"], equals: { status: "captured" },
+        output: { status: "captured", artifact_id: "BUILD-2048", step_id: "ingest", decision: "deterministic" },
+        log: "step=ingest action=mock status=captured"
+      },
+      {
+        id: "verify", name: "Deterministic verification", action: "mock", deps: ["ingest"],
+        evidence: ["output-contract","validation-report"],
+        required: ["status","checks_passed"], equals: { status: "verified" },
+        output: { status: "verified", checks_passed: 12, step_id: "verify", decision: "deterministic" },
+        log: "step=verify action=mock status=verified"
+      },
+      {
+        id: "approve", name: "Validation gate", action: "mock", deps: ["verify"],
+        evidence: ["output-contract","approval-record"],
+        required: ["status","decision"], equals: { status: "approved" },
+        output: { status: "approved", decision: "deterministic", step_id: "approve" },
+        log: "step=approve action=mock status=approved"
+      },
+      {
+        id: "package", name: "Assemble evidence package", action: "mock", deps: ["approve"],
+        evidence: ["output-contract","bundle-record"],
+        required: ["status","final_status"], equals: { final_status: "complete" },
+        output: { status: "complete", final_status: "complete", step_id: "package", decision: "deterministic" },
+        log: "step=package action=mock status=complete"
+      }
+    ];
+
+    const workflowObject = {
+      workflow_id: "controlled-release-verification",
+      version: "0.1",
+      inputs: { artifact_id: "BUILD-2048", environment: "staging" },
+      validation_gates: ["evidence-required","output-contract"],
+      evidence_requirements: ["output-contract"],
+      steps: [
+        {
+          id: "ingest", name: "Capture immutable inputs", action: "mock",
+          inputs: { output: { status: "captured", artifact_id: "BUILD-2048" } },
+          expected_outputs: { required_fields: ["status","artifact_id"], equals: { status: "captured" } },
+          evidence: ["input-snapshot"]
+        },
+        {
+          id: "verify", name: "Deterministic verification", action: "mock", depends_on: ["ingest"],
+          inputs: { output: { status: "verified", checks_passed: 12 } },
+          expected_outputs: { required_fields: ["status","checks_passed"], equals: { status: "verified" } },
+          evidence: ["validation-report"]
+        },
+        {
+          id: "approve", name: "Validation gate", action: "mock", depends_on: ["verify"],
+          inputs: { output: { status: "approved", decision: "deterministic" } },
+          expected_outputs: { required_fields: ["status","decision"], equals: { status: "approved" } },
+          evidence: ["approval-record"]
+        },
+        {
+          id: "package", name: "Assemble evidence package", action: "mock", depends_on: ["approve"],
+          inputs: { output: { status: "complete", final_status: "complete" } },
+          expected_outputs: { required_fields: ["status","final_status"], equals: { final_status: "complete" } },
+          evidence: ["bundle-record"]
+        }
+      ]
+    };
+
+    const workflowYaml = `workflow_id: controlled-release-verification
+version: "0.1"
+inputs:
+  artifact_id: BUILD-2048
+  environment: staging
+validation_gates:
+  - evidence-required
+  - output-contract
+evidence_requirements:
+  - output-contract
+steps:
+  - id: ingest
+    name: Capture immutable inputs
+    action: mock
+    inputs:
+      output:
+        status: captured
+        artifact_id: BUILD-2048
+    expected_outputs:
+      required_fields: [status, artifact_id]
+      equals:
+        status: captured
+    evidence: [input-snapshot]
+  - id: verify
+    name: Deterministic verification
+    action: mock
+    depends_on: [ingest]
+    inputs:
+      output:
+        status: verified
+        checks_passed: 12
+    expected_outputs:
+      required_fields: [status, checks_passed]
+      equals:
+        status: verified
+    evidence: [validation-report]
+  - id: approve
+    name: Validation gate
+    action: mock
+    depends_on: [verify]
+    inputs:
+      output:
+        status: approved
+        decision: deterministic
+    expected_outputs:
+      required_fields: [status, decision]
+      equals:
+        status: approved
+    evidence: [approval-record]
+  - id: package
+    name: Assemble evidence package
+    action: mock
+    depends_on: [approve]
+    inputs:
+      output:
+        status: complete
+        final_status: complete
+    expected_outputs:
+      required_fields: [status, final_status]
+      equals:
+        final_status: complete
+    evidence: [bundle-record]`;
+
+    const state = {
+      stage: 0,
+      format: "yaml",
+      selectedStep: 0,
+      executionIndex: -1,
+      mismatch: false,
+      tampered: false,
+      drift: false,
+      outputTab: 0,
+      playing: false,
+      timer: null,
+      baselineHashes: [],
+      evidenceHashes: [],
+      chain: [],
+      snapshotHash: "",
+      replayHash: ""
+    };
+
+    const el = id => document.getElementById(id);
+
+    function canonical(value) {
+      if (value === null || typeof value !== "object") return JSON.stringify(value);
+      if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+      return "{" + Object.keys(value).sort().map(k => JSON.stringify(k) + ":" + canonical(value[k])).join(",") + "}";
+    }
+
+    async function sha256(value) {
+      const text = typeof value === "string" ? value : canonical(value);
+      if (window.crypto && crypto.subtle) {
+        const bytes = new TextEncoder().encode(text);
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2,"0")).join("");
+      }
+      let h1 = 0x811c9dc5;
+      for (let i=0;i<text.length;i++) {
+        h1 ^= text.charCodeAt(i);
+        h1 = Math.imul(h1, 16777619);
+      }
+      const x = (h1 >>> 0).toString(16).padStart(8,"0");
+      return (x + x + x + x + x + x + x + x).slice(0,64);
+    }
+
+    function shortHash(h) { return h ? h.slice(0,10) + "…" + h.slice(-6) : "pending"; }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;" }[c]));
+    }
+
+    async function buildHashes() {
+      state.baselineHashes = [];
+      state.evidenceHashes = [];
+      state.chain = [];
+      let prev = "";
+      for (const step of steps) {
+        const outHash = await sha256(step.output);
+        state.baselineHashes.push(outHash);
+        const ev = step.evidence.map(type => ({ step_id: step.id, type, output_hash: outHash }));
+        const evHashes = [];
+        for (const item of ev) evHashes.push(await sha256(item));
+        state.evidenceHashes.push(evHashes);
+        const recordBase = { step_id: step.id, output_sha256: outHash, evidence: step.evidence.map(type => "evidence/" + step.id + "-" + type + ".json"), prev_hash: prev };
+        const recordHash = await sha256(recordBase);
+        state.chain.push({ ...recordBase, hash: recordHash });
+        prev = recordHash;
+      }
+      const snapshot = Object.fromEntries(steps.map(s => [s.id, s.output]));
+      state.snapshotHash = await sha256(snapshot);
+      state.replayHash = state.snapshotHash;
+    }
+
+    function renderStageRail() {
+      el("stageRail").innerHTML = stages.map((s,i) =>
+        '<button class="stage-btn ' + (i===state.stage ? 'active' : i<state.stage ? 'done' : '') + '" data-stage="' + i + '">' +
+        '<span class="n">' + String(i+1).padStart(2,"0") + '</span><span class="label">' + s.short + '</span></button>'
+      ).join("");
+      document.querySelectorAll(".stage-btn").forEach(btn => btn.addEventListener("click", () => setStage(Number(btn.dataset.stage))));
+    }
+
+    function renderWorkflow() {
+      el("workflowCode").textContent = state.format === "yaml" ? workflowYaml : JSON.stringify(workflowObject,null,2);
+      el("codeFilename").textContent = state.format === "yaml" ? "workflow.yaml" : "workflow.json";
+      el("yamlBtn").classList.toggle("active", state.format === "yaml");
+      el("jsonBtn").classList.toggle("active", state.format === "json");
+      el("yamlBtn").setAttribute("aria-pressed", state.format === "yaml");
+      el("jsonBtn").setAttribute("aria-pressed", state.format === "json");
+      const focus = el("codeFocus");
+      const offsets = state.format === "yaml"
+        ? [74, 176, 285, 397, 508]
+        : [72, 204, 328, 450, 572];
+      focus.style.top = offsets[Math.min(state.stage,4)] + "px";
+    }
+
+    function nodePosition(i) {
+      const positions = [
+        { left:"16%", top:"50%" },
+        { left:"41%", top:"50%" },
+        { left:"66%", top:"50%" },
+        { left:"91%", top:"50%" }
+      ];
+      return positions[i];
+    }
+
+    function stepStatus(i) {
+      if (state.stage < 2) return "queued";
+      if (state.mismatch) {
+        if (i < 1) return "passed";
+        if (i === 1) return "failed";
+        return "blocked";
+      }
+      if (state.executionIndex === i) return "running";
+      if (state.executionIndex > i || state.stage >= 4) return "passed";
+      return "queued";
+    }
+
+    function renderGraph() {
+      el("planStrip").innerHTML = steps.map((s,i) => '<span class="' + (i===state.executionIndex ? 'plan-active' : '') + '">' + (i+1) + ' · ' + s.id + '</span>').join("");
+      document.querySelectorAll(".node").forEach(n => n.remove());
+      steps.forEach((s,i) => {
+        const pos = nodePosition(i);
+        const n = document.createElement("button");
+        const status = stepStatus(i);
+        n.className = "node " + (status === "queued" ? "" : status);
+        n.style.left = pos.left;
+        n.style.top = pos.top;
+        n.dataset.step = i;
+        n.setAttribute("aria-label", s.name + ", status " + status);
+        n.innerHTML = '<span class="node-status"></span><span class="node-id">' + s.id + '</span><strong>' + s.name + '</strong><small>' + (s.deps.length ? "depends: " + s.deps.join(", ") : "root step") + '</small>';
+        n.addEventListener("click", () => { state.selectedStep = i; renderNodeDetail(); renderOutputs(); });
+        el("graph").appendChild(n);
+      });
+      [0,1,2].forEach(i => {
+        const edge = el("edge"+i);
+        edge.classList.toggle("edge-active", state.stage >= 1 && (state.executionIndex > i || state.stage >= 4));
+      });
+      const token = el("schedulerToken");
+      if (state.stage >= 2 && state.stage <= 4 && !state.mismatch && state.executionIndex >= 0) {
+        const pos = nodePosition(state.executionIndex);
+        token.style.left = pos.left;
+        token.style.top = pos.top;
+        token.classList.add("visible");
+      } else {
+        token.classList.remove("visible");
+      }
+      renderNodeDetail();
+    }
+
+    function renderNodeDetail() {
+      const s = steps[state.selectedStep];
+      const status = stepStatus(state.selectedStep);
+      let controls = "";
+      if (state.stage === 3) {
+        controls = '<div class="gate-actions"><button class="danger-btn" id="mismatchBtn">' + (state.mismatch ? "Reset contract simulation" : "Simulate contract mismatch") + '</button></div>';
+      } else if (state.stage === 2) {
+        controls = '<div class="gate-actions"><button class="primary-btn" id="runPlanBtn">Run deterministic plan</button></div>';
+      }
+      el("nodeDetail").innerHTML =
+        '<div><p class="zone-kicker">Selected step</p><h3>' + s.id + '</h3></div>' +
+        '<div><h3>' + s.name + '</h3><p>action=' + s.action + ' · status=' + status + '</p></div>' +
+        '<div></div><div class="detail-tags">' +
+        '<span>depends_on: ' + (s.deps.join(", ") || "none") + '</span>' +
+        '<span>required: ' + s.required.join(", ") + '</span>' +
+        '<span>evidence: ' + s.evidence.join(", ") + '</span></div>' + controls;
+      const mismatchBtn = el("mismatchBtn");
+      if (mismatchBtn) mismatchBtn.addEventListener("click", () => {
+        state.mismatch = !state.mismatch;
+        state.executionIndex = state.mismatch ? 1 : 3;
+        renderAll();
+      });
+      const runBtn = el("runPlanBtn");
+      if (runBtn) runBtn.addEventListener("click", runExecutionAnimation);
+    }
+
+    async function runExecutionAnimation() {
+      state.mismatch = false;
+      for (let i=0;i<steps.length;i++) {
+        state.executionIndex = i;
+        state.selectedStep = i;
+        renderGraph();
+        renderValidation();
+        await new Promise(r => setTimeout(r, 650));
+      }
+      state.executionIndex = steps.length;
+      renderAll();
+    }
+
+    function currentOutput(i) {
+      const out = structuredClone(steps[i].output);
+      if (state.mismatch && i === 1) out.status = "mismatch";
+      if (state.tampered && i === 2) out.decision = "altered";
+      return out;
+    }
+
+    function renderValidation() {
+      const rows = [];
+      steps.forEach((s,i) => {
+        const out = currentOutput(i);
+        const active = state.stage >= 3;
+        const reqPass = s.required.every(k => Object.prototype.hasOwnProperty.call(out,k));
+        const eqPass = Object.entries(s.equals).every(([k,v]) => out[k] === v);
+        const evidencePass = s.evidence.length > 0;
+        const blocked = state.mismatch && i > 1;
+        rows.push({ label: s.id + " · required fields", status: blocked ? "blocked" : active ? (reqPass ? "pass" : "fail") : "pending" });
+        rows.push({ label: s.id + " · equals contract", status: blocked ? "blocked" : active ? (eqPass ? "pass" : "fail") : "pending" });
+        rows.push({ label: s.id + " · evidence-required", status: blocked ? "blocked" : active ? (evidencePass ? "pass" : "fail") : "pending" });
+      });
+      const failed = rows.some(r => r.status === "fail");
+      el("view-validation").innerHTML =
+        '<div class="integrity-banner ' + (failed ? 'bad' : '') + '"><span>' + (failed ? 'Validation failed · fail-fast' : state.stage >= 3 ? 'Validation gates satisfied' : 'Validation pending') + '</span><span>output-contract + evidence-required</span></div>' +
+        '<div class="gate-list">' + rows.map(r => '<div class="gate-row ' + (r.status === "blocked" ? "pending" : r.status) + '"><span>' + r.label + '</span><span class="status">' + r.status + '</span></div>').join("") + '</div>';
+    }
+
+    function renderEvidence() {
+      const visible = state.stage >= 4;
+      el("view-evidence").innerHTML =
+        '<div class="evidence-list">' +
+        steps.map((s,i) => {
+          return s.evidence.map((type,j) => {
+            const h = state.evidenceHashes[i] ? state.evidenceHashes[i][j] : "";
+            return '<div class="evidence-row ' + (visible ? 'visible' : '') + '"><div><strong>evidence/' + s.id + '-' + type + '.json</strong><span>step=' + s.id + ' · type=' + type + '</span></div><button class="hash-pill" title="' + h + '">' + shortHash(h) + '</button></div>';
+          }).join("");
+        }).join("") + '</div>';
+    }
+
+    function renderOutputs() {
+      const selected = steps[state.outputTab] || steps[0];
+      const snapshot = Object.fromEntries(steps.map((s,i) => [s.id,currentOutput(i)]));
+      const content = state.stage >= 5
+        ? '<div class="output-tabs">' + steps.map((s,i) => '<button data-output="' + i + '" class="' + (i===state.outputTab?'active':'') + '">' + s.id + '</button>').join("") + '<button data-output="snapshot" class="' + (state.outputTab==="snapshot"?'active':'') + '">snapshot</button></div>' +
+          (state.outputTab === "snapshot"
+            ? '<div class="inspect-card"><div class="inspect-head"><span>outputs_snapshot.json</span><span>normalized output map</span></div><pre>' + escapeHtml(JSON.stringify(snapshot,null,2)) + '</pre></div>'
+            : '<div class="inspect-card"><div class="inspect-head"><span>logs/' + selected.id + '.log</span><span>readable execution log</span></div><pre>' + escapeHtml(selected.log) + '</pre></div><div style="height:8px"></div><div class="inspect-card"><div class="inspect-head"><span>outputs/' + selected.id + '.json</span><span>deterministic step output</span></div><pre>' + escapeHtml(JSON.stringify(currentOutput(Number(state.outputTab)),null,2)) + '</pre></div>')
+        : '<div class="stage-explainer">Logs and output snapshots appear after deterministic execution reaches this stage.</div>';
+      el("view-outputs").innerHTML = content;
+      document.querySelectorAll("[data-output]").forEach(btn => btn.addEventListener("click", () => {
+        state.outputTab = btn.dataset.output === "snapshot" ? "snapshot" : Number(btn.dataset.output);
+        renderOutputs();
+      }));
+    }
+
+    async function renderHashes() {
+      const blocks = [];
+      let anyBroken = false;
+      for (let i=0;i<steps.length;i++) {
+        const currentHash = await sha256(currentOutput(i));
+        const broken = state.tampered && currentHash !== state.baselineHashes[i];
+        anyBroken ||= broken;
+        const c = state.chain[i] || {};
+        blocks.push(
+          '<div class="hash-block ' + (broken ? 'broken' : '') + '">' +
+          '<div class="hash-top"><strong>' + steps[i].id + '</strong><code title="' + (broken ? currentHash : c.hash || '') + '">' + shortHash(broken ? currentHash : c.hash) + '</code></div>' +
+          '<p>output_sha256=' + shortHash(c.output_sha256) + '<br>prev_hash=' + (c.prev_hash ? shortHash(c.prev_hash) : 'genesis') + '</p>' +
+          (broken ? '<p style="color:var(--bad);margin-top:7px">Current output no longer matches the recorded output hash.</p>' : '') +
+          '</div>'
+        );
+      }
+      el("view-hashes").innerHTML =
+        '<div class="integrity-banner ' + (anyBroken ? 'bad' : '') + '"><span>' + (anyBroken ? 'Hash mismatch detected' : 'Chain matches recorded outputs') + '</span><span>Tamper-evident · SHA-256</span></div>' +
+        '<div class="gate-actions" style="margin-bottom:9px"><button class="danger-btn" id="tamperBtn">' + (state.tampered ? 'Reset tamper demo' : 'Tamper demo') + '</button></div>' +
+        '<div class="hash-list">' + blocks.join("") + '</div>';
+      el("tamperBtn").addEventListener("click", () => { state.tampered = !state.tampered; renderHashes(); renderOutputs(); });
+    }
+
+    function renderBundle() {
+      const files = [
+        ["manifest.json","run identity · status · hash_chain_head"],
+        ["inputs/workflow.yaml","captured workflow snapshot"],
+        ["inputs_snapshot.json","normalized workflow inputs"],
+        ["outputs/ingest.json","step output"],
+        ["outputs/verify.json","step output"],
+        ["outputs/approve.json","step output"],
+        ["outputs/package.json","step output"],
+        ["outputs_snapshot.json","complete output map"],
+        ["logs/<step-id>.log","readable step logs"],
+        ["validation_result.json","gate result + errors"],
+        ["evidence_index.json","evidence paths + SHA-256"],
+        ["hash_chain.json","ordered linked hash records"],
+        ["summary.json","run status + timing"]
+      ];
+      const visible = state.stage >= 7;
+      el("view-bundle").innerHTML =
+        '<div class="integrity-banner"><span>runs/demo-continuum-001/</span><span>' + (visible ? 'assembled' : 'pending') + '</span></div>' +
+        '<div class="bundle-tree">' + files.map((f,i) =>
+          '<div class="bundle-row ' + (visible ? 'visible' : '') + '" style="transition-delay:' + (i*35) + 'ms"><span class="file-dot"></span><span>' + f[0] + '</span><span class="bundle-note">' + f[1] + '</span></div>'
+        ).join("") + '</div>';
+    }
+
+    async function renderReplay() {
+      const sourceSnapshot = Object.fromEntries(steps.map(s => [s.id,s.output]));
+      const replaySnapshot = structuredClone(sourceSnapshot);
+      if (state.drift) replaySnapshot.verify.checks_passed = 13;
+      const sourceHash = await sha256(sourceSnapshot);
+      const replayHash = await sha256(replaySnapshot);
+      const drift = sourceHash !== replayHash;
+      el("view-replay").innerHTML =
+        '<div class="gate-actions" style="margin-bottom:10px"><button class="primary-btn" id="replayBtn">Replay captured workflow</button><button class="danger-btn" id="driftBtn">' + (state.drift ? 'Reset drift simulation' : 'Simulate drift') + '</button></div>' +
+        '<div class="replay-grid">' +
+        '<div class="replay-card"><div class="replay-label">Source run</div><strong>demo-continuum-001</strong><code>' + sourceHash + '</code></div>' +
+        '<div class="replay-arrow">inputs/workflow.yaml → replay</div>' +
+        '<div class="replay-card"><div class="replay-label">Replay run</div><strong>replay-demo-continuum-001</strong><code>' + replayHash + '</code></div>' +
+        '<div class="replay-result ' + (drift ? 'drift' : '') + '">' + (drift ? 'Drift detected — output snapshots differ.' : 'No drift — output snapshots identical.') + '<br>replay_report.json records both hashes.</div>' +
+        '</div>';
+      el("driftBtn").addEventListener("click", () => { state.drift = !state.drift; renderReplay(); });
+      el("replayBtn").addEventListener("click", async () => {
+        el("replayBtn").textContent = "Replaying…";
+        await new Promise(r => setTimeout(r, 550));
+        el("replayBtn").textContent = "Replay complete";
+        setTimeout(() => { const b=el("replayBtn"); if(b) b.textContent="Replay captured workflow"; }, 1000);
+      });
+    }
+
+    function setArtifactView(name) {
+      document.querySelectorAll(".artifact-tabs button").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+      document.querySelectorAll(".artifact-view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
+    }
+
+    function updateZones() {
+      el("zoneCode").classList.toggle("active-zone", state.stage === 0);
+      el("zoneGraph").classList.toggle("active-zone", state.stage >= 1 && state.stage <= 3);
+      el("zoneArtifacts").classList.toggle("active-zone", state.stage >= 4);
+      const status = state.stage < 3 ? "Awaiting execution" :
+        state.mismatch ? "Validation failed" :
+        state.stage < 7 ? "Artifacts captured" :
+        state.stage === 7 ? "Bundle assembled" : "Replay ready";
+      el("artifactStatus").textContent = status;
+    }
+
+    function renderStageText() {
+      el("stageTitle").textContent = String(state.stage+1).padStart(2,"0") + " · " + stages[state.stage].label;
+      el("stageExplainer").innerHTML = '<strong>' + stages[state.stage].label + '.</strong> ' + stages[state.stage].explain;
+      el("experience").dataset.stage = String(state.stage);
+      el("prevBtn").disabled = state.stage === 0;
+      el("nextBtn").disabled = state.stage === stages.length - 1;
+    }
+
+    function setStage(next) {
+      state.stage = Math.max(0,Math.min(stages.length-1,next));
+      if (state.stage < 2) state.executionIndex = -1;
+      if (state.stage === 2 && state.executionIndex < 0) state.executionIndex = 0;
+      if (state.stage >= 4 && !state.mismatch) state.executionIndex = 4;
+      state.selectedStep = Math.min(state.selectedStep, steps.length-1);
+      renderAll();
+      setArtifactView(stages[state.stage].artifact);
+    }
+
+    function renderAll() {
+      renderStageRail();
+      renderWorkflow();
+      renderGraph();
+      renderValidation();
+      renderEvidence();
+      renderOutputs();
+      renderHashes();
+      renderBundle();
+      renderReplay();
+      renderStageText();
+      updateZones();
+    }
+
+    function togglePlay() {
+      state.playing = !state.playing;
+      el("playBtn").setAttribute("aria-pressed", String(state.playing));
+      el("playIcon").textContent = state.playing ? "Ⅱ" : "▶";
+      el("playText").textContent = state.playing ? "Pause tour" : "Play guided tour";
+      if (state.timer) clearInterval(state.timer);
+      if (state.playing) {
+        state.timer = setInterval(() => {
+          if (state.stage >= stages.length-1) {
+            state.stage = -1;
+          }
+          setStage(state.stage + 1);
+        }, 3600);
+      }
+    }
+
+    async function init() {
+      await buildHashes();
+      renderAll();
+
+      el("yamlBtn").addEventListener("click", () => { state.format="yaml"; renderWorkflow(); });
+      el("jsonBtn").addEventListener("click", () => { state.format="json"; renderWorkflow(); });
+      el("prevBtn").addEventListener("click", () => setStage(state.stage-1));
+      el("nextBtn").addEventListener("click", () => setStage(state.stage+1));
+      el("playBtn").addEventListener("click", togglePlay);
+      document.querySelectorAll(".artifact-tabs button").forEach(btn => btn.addEventListener("click", () => setArtifactView(btn.dataset.view)));
+
+      document.addEventListener("keydown", e => {
+        if (["INPUT","TEXTAREA","SELECT"].includes(document.activeElement.tagName)) return;
+        if (e.key === "ArrowRight") setStage(state.stage+1);
+        if (e.key === "ArrowLeft") setStage(state.stage-1);
+        if (e.key === " ") { e.preventDefault(); togglePlay(); }
+      });
+
+      setArtifactView(stages[state.stage].artifact);
+    }
+
+    init();
+  </script>
+</body>
+</html>
