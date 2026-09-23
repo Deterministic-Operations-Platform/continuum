@@ -55,10 +55,14 @@ _SECRET_HINTS = (
     "client_secret",
 )
 _SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"(?i)(token\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-    (r"(?i)(password\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-    (r"(?i)(cookie\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-    (r"(?i)(authorization\s*:\s*bearer\s+)([^\s,;]+)", r"\1[REDACTED]"),
+    # The optional `"?` around the separator/value lets these patterns also
+    # redact secrets embedded in JSON-formatted text (e.g. a captured HTTP
+    # response body like `{"password": "..."}`), which the previous
+    # unquoted-only patterns silently failed to match.
+    (r'(?i)(token"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+    (r'(?i)(password"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+    (r'(?i)(cookie"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+    (r'(?i)(authorization"?\s*:\s*"?bearer\s+)([^\s,;"]+)', r"\1[REDACTED]"),
 )
 
 

@@ -7,6 +7,11 @@ from continuum.signing import verify_bundle_signature
 
 
 def cmd_verify(run_id: str, runs_dir: str) -> int:
+    # Mirror publish_run's guard (continuum/publish.py) so a run id cannot
+    # escape runs_dir via path traversal (e.g. "../../etc").
+    if not run_id or any(sep in run_id for sep in ("..", "/", "\\")):
+        raise ValueError(f"Invalid run id: {run_id!r}")
+
     run_dir = Path(runs_dir) / run_id
     summary_path = run_dir / "summary.json"
     if not summary_path.is_file():

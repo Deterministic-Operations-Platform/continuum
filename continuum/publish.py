@@ -13,10 +13,13 @@ from continuum.signing import verify_bundle_signature
 
 
 _REDACTION_PATTERNS = [
-    (r"(?i)(token\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-    (r"(?i)(password\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-    (r"(?i)(cookie\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-    (r"(?i)(authorization\s*:\s*bearer\s+)([^\s,;]+)", r"\1[REDACTED]"),
+    # `"?` tolerates JSON-quoted key/value text (e.g. `{"password": "..."}`)
+    # in the .json evidence files this redaction pass runs over; the
+    # previous unquoted-only patterns never matched real JSON syntax.
+    (r'(?i)(token"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+    (r'(?i)(password"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+    (r'(?i)(cookie"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+    (r'(?i)(authorization"?\s*:\s*"?bearer\s+)([^\s,;"]+)', r"\1[REDACTED]"),
 ]
 _REDACTION_SKIP_FILES = {"manifest.json", "bundle_signature.json", "manifest.sha256"}
 

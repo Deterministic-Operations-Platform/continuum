@@ -1521,11 +1521,15 @@ def _read_tail_lines(path: str, *, max_bytes: int, max_lines: int) -> list[str]:
 
 def _redact_text(text: str) -> str:
     redacted = text
+    # `"?` tolerates JSON-quoted key/value text (e.g. structured JSON log
+    # lines like `{"token": "..."}`), which the previous unquoted-only
+    # patterns never matched. Kept consistent with continuum/runtime.py
+    # and continuum/publish.py, which redact the same secret shapes.
     patterns = [
-        (r"(?i)(token\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-        (r"(?i)(password\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-        (r"(?i)(cookie\s*[=:]\s*)([^\s,;]+)", r"\1[REDACTED]"),
-        (r"(?i)(authorization\s*:\s*bearer\s+)([^\s,;]+)", r"\1[REDACTED]"),
+        (r'(?i)(token"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+        (r'(?i)(password"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+        (r'(?i)(cookie"?\s*[=:]\s*"?)([^\s,;"]+)', r"\1[REDACTED]"),
+        (r'(?i)(authorization"?\s*:\s*"?bearer\s+)([^\s,;"]+)', r"\1[REDACTED]"),
     ]
     for pattern, repl in patterns:
         redacted = re.sub(pattern, repl, redacted)
