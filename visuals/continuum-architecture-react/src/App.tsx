@@ -179,7 +179,7 @@ function App() {
   return (
     <div className="min-h-screen bg-[#07111a] text-slate-100">
       <div className="pointer-events-none fixed inset-0 tech-grid opacity-75" />
-      <div className="relative mx-auto w-[min(1580px,calc(100%-24px))] pb-10">
+      <div className="relative mx-auto w-[min(1580px,calc(100%_-_24px))] pb-10">
         <Header />
         <Hero />
 
