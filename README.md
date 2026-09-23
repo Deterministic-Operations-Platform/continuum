@@ -1,5 +1,8 @@
 # Continuum
 
+<!-- portfolio-hero -->
+![Continuum hero artwork](docs/assets/portfolio-hero.jpg)
+
 Continuum is a standalone deterministic orchestration framework for regulated, high-stakes engineering workflows. It helps teams define replayable workflows, capture audit-grade evidence, enforce validation gates, and produce tamper-evident run bundles.
 
 Continuum is **not** a Jira, Postman, Mongo, FedNow, or company-specific defect cockpit. The v0.1 demo uses mock payment-style steps only and contains no real credentials, real company data, or proprietary integrations.
