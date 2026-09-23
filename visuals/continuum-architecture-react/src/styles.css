@@ -58,6 +58,7 @@ pre { margin:0; }
 .status-dot.passed { background:#6ee7b7; }
 .status-dot.failed { background:#f87171; }
 .status-dot.blocked { background:#475569; }
+.micro-tag { border:1px solid rgba(71,85,105,.6); border-radius:4px; padding:4px 6px; color:#94a3b8; font:400 7px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; }
 .action-primary,.action-warning {
   display:inline-flex; min-height:31px; align-items:center; gap:7px; border-radius:5px;
   padding:0 10px; font:600 8px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
