@@ -1,5 +1,9 @@
 # Continuum Orchestrator
 
+> This folder is an earlier minimal starter scaffold. The installable
+> orchestration product and current CLI live at the repository root; follow the
+> root [README](../README.md) for setup and supported commands.
+
 Continuum is a developer productivity + engineering-operations automation platform concept focused on eliminating human orchestration across high‑stakes fintech workflows (e.g., FedNow/RTP and beyond).
 
 This repo is a **starter scaffold** you can publish from your iPhone today, then iterate later from a laptop.

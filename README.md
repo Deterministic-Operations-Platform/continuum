@@ -7,6 +7,32 @@ Continuum is a standalone deterministic orchestration framework for regulated, h
 
 Continuum is **not** a Jira, Postman, Mongo, FedNow, or company-specific defect cockpit. The v0.1 demo uses mock payment-style steps only and contains no real credentials, real company data, or proprietary integrations.
 
+## Install
+
+Requires Python 3.10 or newer. From the repository root, create a virtual
+environment and install the project:
+
+```bash
+python -m venv .venv
+```
+
+On Windows:
+
+```powershell
+.venv\Scripts\python -m pip install .
+.venv\Scripts\continuum.exe --help
+```
+
+On macOS or Linux:
+
+```bash
+.venv/bin/python -m pip install .
+.venv/bin/continuum --help
+```
+
+The repository root is the installable CLI. Run the example workflows below
+from the repository root so their paths resolve.
+
 ## CLI
 
 ```bash
