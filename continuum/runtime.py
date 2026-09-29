@@ -59,6 +59,7 @@ _SECRET_HINTS = (
     "private_key",
     "client_secret",
 )
+_SIGNING_SECRET_ENV_NAMES = {"continuum_signing_key", "continuum_bundle_hmac_key"}
 _SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
     # The optional `"?` around the separator/value lets these patterns also
     # redact secrets embedded in JSON-formatted text (e.g. a captured HTTP
@@ -79,9 +80,21 @@ class _PayloadRedactor:
     def __init__(self, *, env: dict[str, str], vars_payload: dict[str, Any]):
         secrets: set[str] = set()
         for key, value in [*env.items(), *vars_payload.items()]:
-            if isinstance(value, str) and value and any(hint in str(key).lower() for hint in _SECRET_HINTS):
+            key_name = str(key).lower()
+            is_signing_secret = key_name in _SIGNING_SECRET_ENV_NAMES
+            if (
+                isinstance(value, str)
+                and value
+                and (
+                    is_signing_secret
+                    or (
+                        len(value) >= 6
+                        and any(hint in key_name for hint in _SECRET_HINTS)
+                    )
+                )
+            ):
                 secrets.add(value)
-        self._secrets = tuple(sorted((value for value in secrets if len(value) >= 6), key=len, reverse=True))
+        self._secrets = tuple(sorted(secrets, key=len, reverse=True))
 
     def redact(self, payload: Any) -> Any:
         if isinstance(payload, dict):

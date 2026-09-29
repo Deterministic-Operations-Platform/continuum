@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
-from continuum.signing import verify_bundle_signature
+from continuum.signing import signature_verification_enabled, verify_bundle_signature
 
 
 def cmd_verify(run_id: str, runs_dir: str) -> int:
@@ -21,5 +22,13 @@ def cmd_verify(run_id: str, runs_dir: str) -> int:
     policy = summary.get("policy") if isinstance(summary.get("policy"), dict) else {}
     policy_ok = bool(policy.get("ok"))
 
-    sig_ok, _ = verify_bundle_signature(run_dir)
+    try:
+        verify_signature = signature_verification_enabled()
+    except ValueError as err:
+        print(f"Signature verification configuration error: {err}", file=sys.stderr)
+        return 2
+
+    sig_ok = True
+    if verify_signature:
+        sig_ok, _ = verify_bundle_signature(run_dir)
     return 0 if (policy_ok and sig_ok) else 2

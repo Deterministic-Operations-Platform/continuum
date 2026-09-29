@@ -32,7 +32,9 @@ class VerifyCommandTests(unittest.TestCase):
             {
                 "CONTINUUM_SIGNING_MODE": "hmac",
                 "CONTINUUM_SIGNING_KEY": "dev-secret-0123456789abcdef-0123456789",
+                "CONTINUUM_VERIFY_SIGNATURES": "true",
             },
+            clear=True,
         ):
             write_bundle_signature(run_dir)
             code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
@@ -71,6 +73,51 @@ class VerifyCommandTests(unittest.TestCase):
 
             code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
             self.assertEqual(code, 2)
+
+    def test_signature_verification_can_be_explicitly_disabled_for_unsigned_runs(self) -> None:
+        run_id = "v-unsigned"
+        self._make_run(run_id, policy_ok=True)
+
+        with patch.dict(
+            "os.environ", {"CONTINUUM_VERIFY_SIGNATURES": "false"}, clear=True
+        ):
+            code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
+        self.assertEqual(code, 0)
+
+    def test_signature_verification_is_enabled_by_default_for_unsigned_runs(self) -> None:
+        run_id = "v-unsigned-required"
+        self._make_run(run_id, policy_ok=True)
+
+        with patch.dict(
+            "os.environ", {"CONTINUUM_SIGNING_MODE": "unsigned"}, clear=True
+        ):
+            code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
+        self.assertEqual(code, 2)
+
+    def test_required_signing_cannot_disable_signature_verification(self) -> None:
+        run_id = "v-required"
+        self._make_run(run_id, policy_ok=True)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "CONTINUUM_VERIFY_SIGNATURES": "false",
+                "CONTINUUM_SIGNING_REQUIRED": "true",
+            },
+            clear=True,
+        ):
+            code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
+        self.assertEqual(code, 2)
+
+    def test_invalid_signature_verification_setting_fails_closed(self) -> None:
+        run_id = "v-invalid-setting"
+        self._make_run(run_id, policy_ok=True)
+
+        with patch.dict(
+            "os.environ", {"CONTINUUM_VERIFY_SIGNATURES": "sometimes"}, clear=True
+        ):
+            code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":

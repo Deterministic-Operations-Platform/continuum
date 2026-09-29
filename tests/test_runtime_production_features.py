@@ -18,6 +18,7 @@ from continuum import (
     StepResult,
 )
 from continuum.errors import PluginResolutionError, StepExecutionError
+from continuum.runtime import _PayloadRedactor
 
 
 class _FlakyPlugin:
@@ -56,6 +57,25 @@ class _CleanupPlugin:
 
 
 class RuntimeProductionFeaturesTests(unittest.TestCase):
+    def test_signing_secrets_are_redacted_even_when_short(self) -> None:
+        secret = "owner-signing-secret"
+        redactor = _PayloadRedactor(
+            env={"CONTINUUM_SIGNING_KEY": secret, "CONTINUUM_SIGNING_KEY_ID": "ci"},
+            vars_payload={},
+        )
+
+        redacted = json.dumps(redactor.redact({"message": f"signing failed: {secret}"}))
+        self.assertNotIn(secret, redacted)
+        self.assertIn("[REDACTED]", redacted)
+
+    def test_short_signing_secret_is_redacted_without_redacting_key_id(self) -> None:
+        redactor = _PayloadRedactor(
+            env={"CONTINUUM_SIGNING_KEY": "x", "CONTINUUM_SIGNING_KEY_ID": "ci"},
+            vars_payload={},
+        )
+
+        self.assertEqual(redactor.redact("secret=x id=ci"), "secret=[REDACTED] id=ci")
+
     def test_required_signing_fails_before_run_artifacts_are_created(self) -> None:
         run_id = f"test-required-signing-{uuid.uuid4().hex}"
         run_dir = REPO_ROOT / "runs" / run_id

@@ -423,15 +423,7 @@ def _ed25519_signing_material() -> tuple[
 
 
 def _signing_mode_and_required() -> tuple[str, bool]:
-    required_value = (
-        (os.environ.get("CONTINUUM_SIGNING_REQUIRED") or "false").strip().lower()
-    )
-    if required_value in {"1", "true", "yes", "on"}:
-        required = True
-    elif required_value in {"", "0", "false", "no", "off"}:
-        required = False
-    else:
-        raise ValueError("CONTINUUM_SIGNING_REQUIRED must be true or false")
+    required = _environment_flag("CONTINUUM_SIGNING_REQUIRED", default=False)
 
     configured_mode = (os.environ.get("CONTINUUM_SIGNING_MODE") or "").strip().lower()
     if not configured_mode:
@@ -451,6 +443,30 @@ def _signing_mode_and_required() -> tuple[str, bool]:
     if configured_mode not in {"hmac", "ed25519"}:
         raise ValueError(f"Unknown CONTINUUM_SIGNING_MODE: {configured_mode}")
     return configured_mode, required
+
+
+def _environment_flag(name: str, *, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
+def signature_verification_enabled() -> bool:
+    """Return whether `continuum verify` must verify the bundle signature."""
+    enabled = _environment_flag("CONTINUUM_VERIFY_SIGNATURES", default=True)
+    required = _environment_flag("CONTINUUM_SIGNING_REQUIRED", default=False)
+    if not enabled and required:
+        raise ValueError(
+            "CONTINUUM_VERIFY_SIGNATURES cannot be false when "
+            "CONTINUUM_SIGNING_REQUIRED is true"
+        )
+    return enabled
 
 
 def validate_signing_configuration() -> str:

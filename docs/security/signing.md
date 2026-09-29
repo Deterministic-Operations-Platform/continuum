@@ -16,6 +16,7 @@ New signatures use version 2 canonical signing input. Existing HMAC version 1 si
 | --- | --- |
 | `CONTINUUM_SIGNING_MODE` | Explicitly selects `unsigned`, `hmac`, or `ed25519`. Missing mode means unsigned, regardless of whether keys are present. |
 | `CONTINUUM_SIGNING_REQUIRED` | Set to `true` to require an explicit `hmac` or `ed25519` mode and valid key configuration before any workflow starts. |
+| `CONTINUUM_VERIFY_SIGNATURES` | Set to `true` (default) to verify signatures with `continuum verify`; set to `false` for an explicit policy-only check in development. It cannot be disabled when `CONTINUUM_SIGNING_REQUIRED=true`. Publishing still verifies signatures for its report. |
 | `CONTINUUM_SIGNING_KEY` | HMAC secret. Store it in the deployment secret manager or GitHub Actions secrets. |
 | `CONTINUUM_SIGNING_KEY_ID` | Identifier authenticated by new signatures; defaults to `default`. Use 1–128 ASCII letters, digits, `.`, `_`, `:`, or `-`, starting with a letter or digit. |
 | `CONTINUUM_SIGNING_PRIVATE_KEY` | Ed25519 PKCS#8 PEM private key, supplied as a secret value. |
@@ -33,6 +34,8 @@ Do not set multiple private-key sources, multiple public-key sources, or both an
 HMAC values are UTF-8 text with a minimum encoded length of 32 bytes. The documented GitHub command below generates 48 random bytes represented as URL-safe text. Ed25519 raw private keys are exactly 32 bytes encoded as canonical base64; PEM private keys must be Ed25519 PKCS#8. Trusted ring public keys are exactly 32 raw bytes encoded as canonical base64. IDs follow the same character and length rules above. Keep private material in a secret manager or a local directory with owner-only access.
 
 `CONTINUUM_SIGNING_REQUIRED=true` with a missing mode, an unsigned mode, or a missing/invalid key fails before Continuum creates the run directory or executes workflow steps. Explicit `hmac` or `ed25519` mode also fails before workflow execution when its key configuration is missing. In development and tests, omit the mode or explicitly set `unsigned`; an available key is ignored unless signing mode is selected.
+
+`continuum verify` checks both the policy result and signature by default. In development, set `CONTINUUM_VERIFY_SIGNATURES=false` to check only the policy result for an unsigned run. Production or other required-signing environments reject this setting, so disabling a signature check cannot turn an unsigned run into a successful required-signing verification.
 
 HMAC mode accepts one shared secret at a time. Replacing that secret makes older HMAC bundles unverifiable unless the old secret is restored; use Ed25519 and retain old public keys in the ring for overlapping verification during rotation.
 
