@@ -4,12 +4,19 @@ import os
 import shutil
 import sqlite3
 import sys
-from types import SimpleNamespace
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from continuum import DeterministicRuntime, EvidenceCollector, PluginRegistry, Scenario, ScenarioStep, StepResult
+from continuum import (
+    DeterministicRuntime,
+    EvidenceCollector,
+    PluginRegistry,
+    Scenario,
+    ScenarioStep,
+    StepResult,
+)
 from continuum.errors import StepExecutionError
 from continuum.plugins import (
     HttpRequestPlugin,
@@ -21,7 +28,6 @@ from continuum.plugins import (
     MongoVerifyPlugin,
     SqlVerifyPlugin,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -118,7 +124,11 @@ class TrustAndConnectorTests(unittest.TestCase):
         runtime = DeterministicRuntime(plugin_registry=PluginRegistry([_NoopPlugin()]), evidence_collector=EvidenceCollector())
         with patch.dict(
             os.environ,
-            {"CONTINUUM_SIGNING_KEY": "unit-test-signing-key", "CONTINUUM_SIGNING_KEY_ID": "unit-test"},
+            {
+                "CONTINUUM_SIGNING_MODE": "hmac",
+                "CONTINUUM_SIGNING_KEY": "unit-test-signing-key-0123456789abcdef",
+                "CONTINUUM_SIGNING_KEY_ID": "unit-test",
+            },
             clear=False,
         ):
             summary = runtime.execute(

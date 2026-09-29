@@ -3,9 +3,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._tmpdir import make_temp_dir, remove_temp_dir
 from continuum.signing import write_bundle_signature
 from continuum.verify import cmd_verify
+from tests._tmpdir import make_temp_dir, remove_temp_dir
 
 
 class VerifyCommandTests(unittest.TestCase):
@@ -27,7 +27,13 @@ class VerifyCommandTests(unittest.TestCase):
         run_id = "v-001"
         run_dir = self._make_run(run_id, policy_ok=True)
 
-        with patch.dict("os.environ", {"CONTINUUM_SIGNING_KEY": "dev-secret"}):
+        with patch.dict(
+            "os.environ",
+            {
+                "CONTINUUM_SIGNING_MODE": "hmac",
+                "CONTINUUM_SIGNING_KEY": "dev-secret-0123456789abcdef-0123456789",
+            },
+        ):
             write_bundle_signature(run_dir)
             code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
             self.assertEqual(code, 0)
@@ -36,7 +42,13 @@ class VerifyCommandTests(unittest.TestCase):
         run_id = "v-002"
         run_dir = self._make_run(run_id, policy_ok=False)
 
-        with patch.dict("os.environ", {"CONTINUUM_SIGNING_KEY": "dev-secret"}):
+        with patch.dict(
+            "os.environ",
+            {
+                "CONTINUUM_SIGNING_MODE": "hmac",
+                "CONTINUUM_SIGNING_KEY": "dev-secret-0123456789abcdef-0123456789",
+            },
+        ):
             write_bundle_signature(run_dir)
             code = cmd_verify(run_id=run_id, runs_dir=str(self.root / "runs"))
             self.assertEqual(code, 2)
@@ -45,7 +57,13 @@ class VerifyCommandTests(unittest.TestCase):
         run_id = "v-003"
         run_dir = self._make_run(run_id, policy_ok=True)
 
-        with patch.dict("os.environ", {"CONTINUUM_SIGNING_KEY": "dev-secret"}):
+        with patch.dict(
+            "os.environ",
+            {
+                "CONTINUUM_SIGNING_MODE": "hmac",
+                "CONTINUUM_SIGNING_KEY": "dev-secret-0123456789abcdef-0123456789",
+            },
+        ):
             write_bundle_signature(run_dir)
 
             # Break signature by changing manifest

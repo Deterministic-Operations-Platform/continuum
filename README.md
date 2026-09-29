@@ -70,9 +70,15 @@ Each run creates `runs/<run-id>/` with:
 - validation result
 - evidence index
 - hash chain
+- `bundle_signature.json` and `manifest.sha256` when bundle signing is enabled
+
+## Bundle Signing
+
+Continuum supports unsigned development runs, HMAC-SHA256 for existing CI integrations, and Ed25519 signatures for deployments that need independent public-key verification. HMAC keys must be at least 32 UTF-8 bytes. Production must set `CONTINUUM_SIGNING_REQUIRED=true` and explicitly choose `CONTINUUM_SIGNING_MODE`; missing signing configuration fails before workflow execution. Ed25519 verifiers trust an externally configured public-key ring; a public key copied into a run bundle is never accepted as a trust anchor. See [bundle signing and key rotation](docs/security/signing.md) for key formats, rotation requirements, environment variables, and the exact GitHub owner action.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Evidence Model](docs/evidence-model.md)
 - [Replay](docs/replay.md)
+- [Bundle Signing and Key Rotation](docs/security/signing.md)

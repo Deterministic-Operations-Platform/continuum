@@ -52,6 +52,8 @@ jobs:
 
       - name: Run scenario
         env:
+          CONTINUUM_SIGNING_MODE: hmac
+          CONTINUUM_SIGNING_REQUIRED: "true"
           CONTINUUM_SIGNING_KEY: ${{ secrets.CONTINUUM_SIGNING_KEY }}
           CONTINUUM_SIGNING_KEY_ID: ci
         run: |

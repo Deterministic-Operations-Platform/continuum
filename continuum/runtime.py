@@ -2,32 +2,38 @@
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import socket
+import urllib.error
+import urllib.request
+import uuid
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import datetime, timezone
+from pathlib import Path
 from threading import Lock
 from time import sleep
 from typing import Any, Protocol
-import urllib.error
 from urllib.parse import urlparse
-import urllib.request
-import uuid
 
-from continuum.errors import ContinuumError, FailureClass, ScenarioValidationError, StepExecutionError
+from continuum.errors import (
+    ContinuumError,
+    FailureClass,
+    PluginResolutionError,
+    ScenarioValidationError,
+    StepExecutionError,
+)
 from continuum.evidence import EvidenceCollector
 from continuum.plugins import (
     PluginRegistry,
     ensure_applauncher_session,
     find_unknown_templates,
     render_templates,
-    resolve_newman_executable,
     resolve_attach_files,
+    resolve_newman_executable,
 )
 from continuum.policy import (
     DEFAULT_POLICY_PATH,
@@ -39,8 +45,7 @@ from continuum.policy import (
 )
 from continuum.reporting import ensure_report
 from continuum.scenario import Scenario, ScenarioStep
-from continuum.signing import write_bundle_signature
-
+from continuum.signing import validate_signing_configuration, write_bundle_signature
 
 _SECRET_HINTS = (
     "secret",
@@ -236,6 +241,11 @@ class DeterministicRuntime:
         actor_roles: tuple[str, ...] | list[str] = (),
         approval_file: str | None = None,
     ) -> dict[str, Any]:
+        try:
+            validate_signing_configuration()
+        except (OSError, RuntimeError, TypeError, ValueError) as err:
+            raise PluginResolutionError(f"Signing configuration error: {err}") from err
+
         resolved_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         run_dir = Path("runs") / resolved_run_id
         run_dir.mkdir(parents=True, exist_ok=True)

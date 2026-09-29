@@ -1,14 +1,23 @@
 import json
 import shutil
-import unittest
-from pathlib import Path
 import sys
+import unittest
+import uuid
+from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from continuum import DeterministicRuntime, EvidenceCollector, PluginRegistry, Scenario, ScenarioStep, StepResult
-from continuum.errors import StepExecutionError
+from continuum import (
+    DeterministicRuntime,
+    EvidenceCollector,
+    PluginRegistry,
+    Scenario,
+    ScenarioStep,
+    StepResult,
+)
+from continuum.errors import PluginResolutionError, StepExecutionError
 
 
 class _FlakyPlugin:
@@ -47,6 +56,43 @@ class _CleanupPlugin:
 
 
 class RuntimeProductionFeaturesTests(unittest.TestCase):
+    def test_required_signing_fails_before_run_artifacts_are_created(self) -> None:
+        run_id = f"test-required-signing-{uuid.uuid4().hex}"
+        run_dir = REPO_ROOT / "runs" / run_id
+        self.addCleanup(lambda: shutil.rmtree(run_dir, ignore_errors=True))
+        scenario = Scenario(
+            name="required-signing-preflight",
+            rail="test",
+            vars={},
+            steps=(ScenarioStep(name="noop", type="test.noop", with_={}),),
+        )
+        runtime = DeterministicRuntime(
+            plugin_registry=PluginRegistry([_ReadVarPlugin()]),
+            evidence_collector=EvidenceCollector(),
+        )
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "CONTINUUM_SIGNING_MODE": "hmac",
+                    "CONTINUUM_SIGNING_REQUIRED": "true",
+                },
+                clear=True,
+            ),
+            self.assertRaisesRegex(
+                PluginResolutionError, "CONTINUUM_SIGNING_KEY is not set"
+            ),
+        ):
+            runtime.execute(
+                scenario=scenario,
+                scenario_source=Path("tests/fixture.yaml"),
+                scenario_text="name: required-signing-preflight",
+                run_id=run_id,
+            )
+
+        self.assertFalse(run_dir.exists())
+
     def test_retries_and_publish_to_vars(self) -> None:
         run_id = "test-runtime-features-1"
         run_dir = REPO_ROOT / "runs" / run_id
