@@ -21,10 +21,9 @@ jobs:
       - id: meta
         run: echo "run_id=ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
       - name: Run continuum scenario
-        env:
-          CONTINUUM_SIGNING_KEY: ${{ secrets.CONTINUUM_SIGNING_KEY }}
-          CONTINUUM_SIGNING_KEY_ID: ci
         run: |
+          export CONTINUUM_SIGNING_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          export CONTINUUM_SIGNING_KEY_ID=ci
           python -m continuum run examples/fednow-cam29-success.yaml --run-id "${{ steps.meta.outputs.run_id }}"
           python -m continuum verify --run-id "${{ steps.meta.outputs.run_id }}" --runs-dir runs
       - name: Upload run bundle artifact
@@ -86,10 +85,10 @@ jobs:
             const pageUrl = "${{ steps.deploy.outputs.page_url }}";
             const reportUrl = `${pageUrl}runs/${runId}/report.html`;
             const body =
-`<!-- continuum-autopilot -->
-### Continuum E2E (clickable report)
-- Run ID: \`${runId}\`
-- Report: ${reportUrl}`;
+            `<!-- continuum-autopilot -->
+            ### Continuum E2E (clickable report)
+            - Run ID: \`${runId}\`
+            - Report: ${reportUrl}`;
 
             const {owner, repo} = context.repo;
             const issue_number = context.payload.pull_request.number;

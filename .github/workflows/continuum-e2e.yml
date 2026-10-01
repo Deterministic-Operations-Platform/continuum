@@ -100,13 +100,13 @@ jobs:
           script: |
             const runId = process.env.RUN_ID;
             const body =
-`<!-- continuum-autopilot -->
-### Continuum E2E
-- Run ID: \`${runId}\`
-- Artifact: **continuum-runs-${runId}** (download from Actions)
-- Bundle path: \`runs/${runId}/\`
+            `<!-- continuum-autopilot -->
+            ### Continuum E2E
+            - Run ID: \`${runId}\`
+            - Artifact: **continuum-runs-${runId}** (download from Actions)
+            - Bundle path: \`runs/${runId}/\`
 
-(See the job summary for step statuses.)`;
+            (See the job summary for step statuses.)`;
 
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
