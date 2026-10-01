@@ -2,6 +2,7 @@ import shutil
 import time
 import unittest
 from pathlib import Path
+from threading import Barrier
 
 from continuum import DeterministicRuntime, EvidenceCollector, PluginRegistry, Scenario, ScenarioStep, StepResult
 from continuum.errors import ScenarioValidationError
@@ -12,8 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class _SleepPlugin:
     type = "test.sleep"
 
+    def __init__(self, start_barrier: Barrier | None = None):
+        self.start_barrier = start_barrier
+
     def run(self, *, step_name, step_with, ctx, step_index):
-        time.sleep(float(step_with.get("seconds", 0.1)))
+        if self.start_barrier is not None:
+            self.start_barrier.wait(timeout=10)
+        else:
+            time.sleep(float(step_with.get("seconds", 0.1)))
         marker = ctx["write_json"](ctx["step_dir"](step_index, step_name), "done.json", {"ok": True})
         return StepResult(ok=True, details={"name": step_name}, evidence_paths=[marker])
 
@@ -34,8 +41,9 @@ class RuntimeParallelTests(unittest.TestCase):
             ),
         )
 
-        runtime = DeterministicRuntime(PluginRegistry([_SleepPlugin()]), EvidenceCollector())
-        started = time.perf_counter()
+        runtime = DeterministicRuntime(
+            PluginRegistry([_SleepPlugin(start_barrier=Barrier(2))]), EvidenceCollector()
+        )
         summary = runtime.execute(
             scenario=scenario,
             scenario_source=Path("tests/fixture.yaml"),
@@ -43,9 +51,6 @@ class RuntimeParallelTests(unittest.TestCase):
             run_id=run_id,
             max_parallel=4,
         )
-        elapsed = time.perf_counter() - started
-
-        self.assertLess(elapsed, 1.0)
         self.assertEqual([s["key"] for s in summary["steps"]], ["a", "b"])
         self.assertTrue((run_dir / "evidence" / "01-a").exists())
         self.assertTrue((run_dir / "evidence" / "02-b").exists())
